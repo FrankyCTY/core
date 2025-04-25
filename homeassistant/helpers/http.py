@@ -121,6 +121,7 @@ class HomeAssistantView:
 
         return Context(user_id=user.id)
 
+    # TODO: Helper to return json response.
     @staticmethod
     def json(
         result: Any,

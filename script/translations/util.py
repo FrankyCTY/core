@@ -70,19 +70,24 @@ def load_json_from_path(path: pathlib.Path) -> Any:
 
 def flatten_translations(translations):
     """Flatten all translations."""
+    # Make use of dict's items view object so that we can access keys and values in the same loop.
+    # Use iter to reduce memory usage.
     stack = [iter(translations.items())]
     key_stack = []
     flattened_translations = {}
     while stack:
+        # Example: [key, value] -> [("component", {"hue": {"platform": {"xx": {}}})]
         for k, v in stack[-1]:
             key_stack.append(k)
             if isinstance(v, dict):
+                # If value is dict, at run time append the dict to the stack for further processing. (DFS)
                 stack.append(iter(v.items()))
                 break
             if isinstance(v, str):
                 common_key = "::".join(key_stack)
                 flattened_translations[common_key] = v
                 key_stack.pop()
+        # Handle case where stack is empty. Such as when we have a dict with no dicts inside. (empty dict)
         else:
             stack.pop()
             if key_stack:

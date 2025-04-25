@@ -437,7 +437,9 @@ class HomeAssistant:
         self._background_tasks: set[asyncio.Future[Any]] = set()
         self.bus = EventBus(self)
         self.services = ServiceRegistry(self)
+        # TODO: Tracks state of entities
         self.states = StateMachine(self.bus, self.loop)
+        # TODO: Includes loaded integrations (in components) and platforms (in all_components).
         self.config = Config(self, config_dir)
         self.config.async_initialize()
         self.state: CoreState = CoreState.not_running
@@ -453,6 +455,7 @@ class HomeAssistant:
         )
         self.loop_thread_id = getattr(self.loop, "_thread_id")
 
+    # TODO: Ensure the operation is running in the event loop thread.
     def verify_event_loop_thread(self, what: str) -> None:
         """Report and raise if we are not running in the event loop thread."""
         if self.loop_thread_id != threading.get_ident():
@@ -752,9 +755,11 @@ class HomeAssistant:
         if hassjob.job_type is HassJobType.Coroutinefunction:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., Coroutine[Any, Any, _R]], hassjob)
+            # TODO: Run as eager task, meaning it is executed immediately until the coroutine await suspension point.
             task = create_eager_task(
                 hassjob.target(*args), name=hassjob.name, loop=self.loop
             )
+            # TODO: It could be done() after running if it doesn't await anything. Fully synchronous.
             if task.done():
                 return task
         elif hassjob.job_type is HassJobType.Callback:
@@ -765,8 +770,10 @@ class HomeAssistant:
         else:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
+            # Allows to offload blocking or CPU-bound functions to a separate thread or process
             task = self.loop.run_in_executor(None, hassjob.target, *args)
 
+        # TODO: Add task to HA core internal task list (background or foreground) list, and then return.
         task_bucket = self._background_tasks if background else self._tasks
         task_bucket.add(task)
         task.add_done_callback(task_bucket.remove)
@@ -1026,6 +1033,8 @@ class HomeAssistant:
                 for task in tasks:
                     _LOGGER.debug("Waiting for task: %s", task)
 
+    # TODO: Block event loop until all pending tasks are completed.
+    # Log pending tasks every 60 seconds.
     async def _await_and_log_pending(
         self, pending: Collection[asyncio.Future[Any]]
     ) -> None:
@@ -1108,6 +1117,7 @@ class HomeAssistant:
 
         # Stage 1 - Run shutdown jobs
         try:
+            # FIXME: Lean about this timeout implementation
             async with self.timeout.async_timeout(STOPPING_STAGE_SHUTDOWN_TIMEOUT):
                 tasks: list[asyncio.Future[Any]] = []
                 for job in self._shutdown_jobs:
@@ -1116,6 +1126,8 @@ class HomeAssistant:
                         continue
                     tasks.append(task_or_none)
                 if tasks:
+                    # TODO: Run all shutdown jobs concurrently.
+                    # FIXME: Where are the jobs defined and added?
                     await asyncio.gather(*tasks, return_exceptions=True)
         except TimeoutError:
             _LOGGER.warning(
@@ -1129,6 +1141,7 @@ class HomeAssistant:
         # Keep holding the reference to the tasks but do not allow them
         # to block shutdown. Only tasks created after this point will
         # be waited for.
+        # TODO: Because later on we will call async_block_till_done() but we only want to wait for tasks created after this point.
         running_tasks = self._tasks
         # Avoid clearing here since we want the remove callbacks to fire
         # and remove the tasks from the original set which is now running_tasks
@@ -1139,13 +1152,18 @@ class HomeAssistant:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.remove)
             task.cancel("Home Assistant is stopping")
+        # TODO: Cancel all handlers in _schedule of the event loop that has HassJob as the first argument.
         self._cancel_cancellable_timers()
 
         self.exit_code = exit_code
 
         self.set_state(CoreState.stopping)
+        # TODO: Fire homeassistant_stop event via event bus!
+        # Invoke all callbacks/coroutine function job types e.g. related to event type homeassistant_stop.
         self.bus.async_fire_internal(EVENT_HOMEASSISTANT_STOP)
         try:
+            # TODO: Block event loop until all pending tasks are completed.
+            # Log pending tasks every 60 seconds.
             async with self.timeout.async_timeout(STOP_STAGE_SHUTDOWN_TIMEOUT):
                 await self.async_block_till_done()
         except TimeoutError:
@@ -1156,8 +1174,11 @@ class HomeAssistant:
 
         # Stage 3 - Final write
         self.set_state(CoreState.final_write)
+        # TODO: Fire homeassistant_final_write event via event bus!
         self.bus.async_fire_internal(EVENT_HOMEASSISTANT_FINAL_WRITE)
         try:
+            # TODO: Block event loop until all pending tasks are completed.
+            # Log pending tasks every 60 seconds.
             async with self.timeout.async_timeout(FINAL_WRITE_STAGE_SHUTDOWN_TIMEOUT):
                 await self.async_block_till_done()
         except TimeoutError:
@@ -1169,6 +1190,7 @@ class HomeAssistant:
 
         # Stage 4 - Close
         self.set_state(CoreState.not_running)
+        # TODO: Fire homeassistant_close event via event bus!
         self.bus.async_fire_internal(EVENT_HOMEASSISTANT_CLOSE)
 
         # Make a copy of running_tasks since a task can finish
@@ -1205,9 +1227,12 @@ class HomeAssistant:
         # it returns will never run after the final `self.async_block_till_done`
         # which will cause the futures to block forever when waiting for
         # the `result()` which will cause a deadlock when shutting down the executor.
+        # TODO: Set attribute on the event loop to prevent scheduling additional callbacks.
         shutdown_run_callback_threadsafe(self.loop)
 
         try:
+            # TODO: Block event loop until all pending tasks are completed.
+            # Log pending tasks every 60 seconds.
             async with self.timeout.async_timeout(CLOSE_STAGE_SHUTDOWN_TIMEOUT):
                 await self.async_block_till_done()
         except TimeoutError:
@@ -1221,6 +1246,7 @@ class HomeAssistant:
         self.import_executor.shutdown()
 
         if self._stopped is not None:
+            # TODO: Immediately unblocks any coroutine awaiting await self._stopped.wait().
             self._stopped.set()
 
     def _cancel_cancellable_timers(self) -> None:
@@ -1419,6 +1445,8 @@ _FilterableJobType = tuple[
 ]
 
 
+# TODO: More a one time handler that would be registered to the event bus and triggered when the event is fired.
+# TODO: Support handler remove callback.
 @dataclass(slots=True)
 class _OneTimeListener(Generic[_DataT]):
     hass: HomeAssistant
@@ -1699,9 +1727,12 @@ class EventBus:
                 breaks_in_ha_version="2025.5",
             )
 
+        # TODO: More a one time handler that would be registered to the event bus and triggered when the event is fired.
+        # TODO: Support handler remove callback.
         one_time_listener: _OneTimeListener[_DataT] = _OneTimeListener(
             self._hass, HassJob(listener)
         )
+        # TODO: Register the one time listener to the event bus, will be added to the internal listeners dict.
         remove = self._async_listen_filterable_job(
             event_type,
             (
@@ -1713,6 +1744,7 @@ class EventBus:
                 None,
             ),
         )
+        # TODO: Store the remove callback in the one time listener.
         one_time_listener.remove = remove
         return remove
 
@@ -2062,6 +2094,7 @@ class States(UserDict[str, State]):
         return self._domain_index[key].values()
 
 
+# TODO: Tracks state of entities
 class StateMachine:
     """Helper class that tracks the state of different entities."""
 
@@ -2467,6 +2500,7 @@ class ServiceRegistry:
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize a service registry."""
+        # TODO: dict = Domina: { service_action_name: service_action_obj (Service class instance) }
         self._services: dict[str, dict[str, Service]] = {}
         self._hass = hass
 
@@ -2552,11 +2586,12 @@ class ServiceRegistry:
             supports_response,
         ).result()
 
+    # TODO: Register a service action for the domain.
     @callback
     def async_register(
         self,
         domain: str,
-        service: str,
+        service: str,  # TODO: Service action name
         service_func: Callable[
             [ServiceCall],
             Coroutine[Any, Any, ServiceResponse | EntityServiceResponse]
@@ -2574,6 +2609,7 @@ class ServiceRegistry:
 
         This method must be run in the event loop.
         """
+        # TODO: Ensure the operation is running in the event loop thread.
         self._hass.verify_event_loop_thread("hass.services.async_register")
         self._async_register(
             domain, service, service_func, schema, supports_response, job_type
@@ -2583,7 +2619,7 @@ class ServiceRegistry:
     def _async_register(
         self,
         domain: str,
-        service: str,
+        service: str,  # TODO: Service action name
         service_func: Callable[
             [ServiceCall],
             Coroutine[Any, Any, ServiceResponse | EntityServiceResponse]
@@ -2612,11 +2648,13 @@ class ServiceRegistry:
             job_type=job_type,
         )
 
+        # TODO: Set to the in memory dict.
         if domain in self._services:
             self._services[domain][service] = service_obj
         else:
             self._services[domain] = {service: service_obj}
 
+        # TODO: Dispatch the event to the event bus.
         self._hass.bus.async_fire_internal(
             EVENT_SERVICE_REGISTERED, {ATTR_DOMAIN: domain, ATTR_SERVICE: service}
         )

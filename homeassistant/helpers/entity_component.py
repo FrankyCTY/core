@@ -60,6 +60,11 @@ async def async_update_entity(hass: HomeAssistant, entity_id: str) -> None:
     await entity_obj.async_update_ha_state(True)
 
 
+# TODO: Summary
+# A controller layer that connects:
+# - The component domain (like light, fan, switch)
+# - To one or more platforms (like hue.light, mqtt.light)
+# - And finally to their entities (e.g., LightEntity, SensorEntity instances)
 class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
     """The EntityComponent manages platforms that manage entities.
 
@@ -111,6 +116,7 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
         """Get an entity."""
         return self._entities.get(entity_id)  # type: ignore[return-value]
 
+    # TODO: Shutdown all registered platforms when the HA core shuts down.
     def register_shutdown(self) -> None:
         """Register shutdown on Home Assistant STOP event.
 
@@ -136,6 +142,7 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
 
         This method must be run in the event loop.
         """
+        # TODO: Register the shutdown event listener first.
         self.register_shutdown()
 
         self.config = config

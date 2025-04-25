@@ -580,7 +580,7 @@ class Config:
         # based components
         self.all_components: set[str] = set()
 
-        # Set of loaded components
+        # TODO: Set of loaded components
         self.components = _ComponentSet(self.top_level_components, self.all_components)
 
         # API (HTTP) server configuration

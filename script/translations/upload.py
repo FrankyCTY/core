@@ -53,20 +53,30 @@ def run_upload_docker():
 
 def generate_upload_data():
     """Generate the data for uploading."""
+    # Load base strings.json file to memory dict.
     translations = load_json_from_path(INTEGRATIONS_DIR.parent / "strings.json")
     translations["component"] = {}
 
+    # Iterate over all integration's string.json files and merge them into the base translations dict.
     for path in INTEGRATIONS_DIR.glob(f"*{os.sep}strings*.json"):
         component = path.parent.name
         match = FILENAME_FORMAT.search(path.name)
+        # Example: homeassistant/components/hue/strings.xx.json
+        # suffix is "xx"
         platform = match.group("suffix") if match else None
 
+        # Example: translations["component"]["hue"]
+        # Where "hue" is the component subdirectory name (integration subdirectory name)
+        # parent would be the dict value of the integration name (component key)
         parent = translations["component"].setdefault(component, {})
 
         if platform:
+            # Example: translations["component"]["hue"]["platform"] = {} if not present
             platforms = parent.setdefault("platform", {})
+            # Example: translations["component"]["hue"]["platform"]["xx"] = {}
             parent = platforms.setdefault(platform, {})
 
+        # Load from component's string.json file.
         parent.update(load_json_from_path(path))
 
     return translations

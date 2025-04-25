@@ -274,14 +274,17 @@ PRELOAD_STORAGE = [
 ]
 
 
+# TODO: Bootstrap hass core object using runtime config.
 async def async_setup_hass(
     runtime_config: RuntimeConfig,
 ) -> core.HomeAssistant | None:
     """Set up Home Assistant."""
 
+    # TODO: Instantiate the hass core object using runtime config.
     async def create_hass() -> core.HomeAssistant:
         """Create the hass object and do basic setup."""
         hass = core.HomeAssistant(runtime_config.config_dir)
+        # TODO: Import the config/custom_components/ folder first.
         loader.async_setup(hass)
 
         await async_enable_logging(
@@ -308,21 +311,25 @@ async def async_setup_hass(
             "Skipping pip installation of required modules. This may cause issues"
         )
 
+    # TODO: Ensure config/configuration.yaml file exists, otherwise a default one will be created.
     if not await conf_util.async_ensure_config_exists(hass):
         _LOGGER.error("Error getting configuration path")
         return None
 
     _LOGGER.info("Config directory: %s", runtime_config.config_dir)
 
+    # TODO: Raises a RuntimeError if a blocking function is called in the same thread of the event loop.
     block_async_io.enable()
 
     if not (recovery_mode := runtime_config.recovery_mode):
         config_dict = None
         basic_setup_success = False
 
+        # TODO: Detect config (config/configuration.yaml) migration needs and process the configuration upgrade.
         await hass.async_add_executor_job(conf_util.process_ha_config_upgrade, hass)
 
         try:
+            # TODO: Ensures the valid config dictionary is ready to be used.
             config_dict = await conf_util.async_hass_config_yaml(hass)
         except HomeAssistantError as err:
             _LOGGER.error(
@@ -331,6 +338,7 @@ async def async_setup_hass(
             )
         else:
             if not is_virtual_env():
+                # TODO: Ensures we have a directory to import third-party libraries from when running in a non-virtual environment.
                 await async_mount_local_lib_path(runtime_config.config_dir)
 
             basic_setup_success = (
@@ -467,9 +475,11 @@ async def async_from_config_dict(
     """
     start = monotonic()
 
+    # TODO: Set up config entries and corresponding components.
     hass.config_entries = config_entries.ConfigEntries(hass, config)
     # Prime custom component cache early so we know if registry entries are tied
     # to a custom integration
+    # TODO: Loads custom integrations into hass data cache if not already loaded.
     await loader.async_get_custom_components(hass)
     await async_load_base_functionality(hass)
 
@@ -681,6 +691,10 @@ class _RotatingFileHandlerWithoutShouldRollOver(RotatingFileHandler):
         return False
 
 
+# TODO: For when not running in a virtual environment, to ensure we have a directory to import third-party libraries from:
+# Dynamically create a local deps/ folder under your Home Assistant config directory.
+# Make Python treat that deps/ folder as a site-packages directory (where third-party libraries live).
+# Modify sys.path at runtime so Python can import packages installed there.
 async def async_mount_local_lib_path(config_dir: str) -> str:
     """Add local library to Python Path.
 

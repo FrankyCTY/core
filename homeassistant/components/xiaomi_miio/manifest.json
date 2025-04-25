@@ -7,5 +7,7 @@
   "iot_class": "local_polling",
   "loggers": ["micloud", "miio"],
   "requirements": ["construct==2.10.68", "micloud==0.5", "python-miio==0.5.12"],
+  // "dependencies": ["zeroconf"], // FIXME: This is missing from source code based on https://developers.home-assistant.io/docs/network_discovery#mdnszeroconf
   "zeroconf": ["_miio._udp.local."]
 }
+// FIXME: Why zeroconf with config flow, how do they work together?

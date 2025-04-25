@@ -123,6 +123,7 @@ SOURCE_REAUTH = "reauth"
 # This is used to initiate a reconfigure flow by the user.
 SOURCE_RECONFIGURE = "reconfigure"
 
+# TODO: Key: Domain, Value: ConfigFlow class/subclass
 HANDLERS: Registry[str, type[ConfigFlow]] = Registry()
 
 STORAGE_KEY = "core.config_entries"
@@ -645,6 +646,10 @@ class ConfigEntry[_DataT = Any]:
         """Return a storage fragment for this entry."""
         return json_fragment(json_bytes_sorted(self.as_dict()))
 
+    # TODO: Set up a config entry.
+    # FIXME: I wonder if service action set up will be related to this method.
+
+    # FIXME: Likely related to integration's set up entry e.g......
     async def async_setup(
         self,
         hass: HomeAssistant,
@@ -652,9 +657,11 @@ class ConfigEntry[_DataT = Any]:
         integration: loader.Integration | None = None,
     ) -> None:
         """Set up an entry."""
+        # TODO: User request to hide this discovery from UI. Skip any other config to it.
         if self.source == SOURCE_IGNORE or self.disabled_by:
             return
 
+        # TODO: Make config entry accessible in the thread as contextvar.
         current_entry.set(self)
         try:
             await self.__async_setup_with_context(hass, integration)
@@ -667,12 +674,18 @@ class ConfigEntry[_DataT = Any]:
         integration: loader.Integration | None,
     ) -> None:
         """Set up an entry, with current_entry set."""
+        # TODO: Requested integration AND the self integration are not provided/NONE.
+        # TODO: Load it from loader (from HASS data cache) based on domain.
         if integration is None and not (integration := self._integration_for_domain):
             integration = await loader.async_get_integration(hass, self.domain)
+            # TODO: Update config entry obj's integration.
             self._integration_for_domain = integration
 
         # Only store setup result as state if it was not forwarded.
+        # TODO: If we did load the integration from HASS data cache based on domain.
+        # TODO: Verdict: The domain is referring to the integration's domain.
         if domain_is_integration := self.domain == integration.domain:
+            # TODO: If the config entry is already loaded or in progress, raise an exception.
             if self.state in (
                 ConfigEntryState.LOADED,
                 ConfigEntryState.SETUP_IN_PROGRESS,
@@ -682,6 +695,7 @@ class ConfigEntry[_DataT = Any]:
                     f" {self.entry_id} cannot be set up because it is already loaded "
                     f"in the {self.state} state"
                 )
+            # TODO: Expecting the asyncio lock is locked at this stage from `async_setup_locked()`
             if not self.setup_lock.locked():
                 raise OperationNotAllowed(
                     f"The config entry {self.title} ({self.domain}) with entry_id"
@@ -690,6 +704,8 @@ class ConfigEntry[_DataT = Any]:
                 )
             self._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
 
+        # FIXME: If previous condition determin the domain is not referring to an integration
+        # Then below 2 if statements will not be able to load anything, as they are loading from the same source to find integration by domain.
         if self.supports_unload is None:
             self.supports_unload = await support_entry_unload(hass, self.domain)
         if self.supports_remove_device is None:
@@ -1110,6 +1126,7 @@ class ConfigEntry[_DataT = Any]:
             return False
         return result
 
+    # TODO: Register callback to be called when config entry is updated.
     def add_update_listener(self, listener: UpdateListenerType) -> CALLBACK_TYPE:
         """Listen for when entry is updated.
 
@@ -1139,6 +1156,7 @@ class ConfigEntry[_DataT = Any]:
             "version": self.version,
         }
 
+    # TODO: Register callback to be called when config entry is unloaded.
     @callback
     def async_on_unload(
         self, func: Callable[[], Coroutine[Any, Any, None] | None]
@@ -1148,9 +1166,14 @@ class ConfigEntry[_DataT = Any]:
             self._on_unload = []
         self._on_unload.append(func)
 
+    # TODO: Handle unload request.
+    # - Process the on_unload callbacks
+    # - Cancel pending background tasks
+    # - Wait for `_tasks` & cancelling background tasks to complete with 10s timout.
     async def _async_process_on_unload(self, hass: HomeAssistant) -> None:
         """Process the on_unload callbacks and wait for pending tasks."""
         if self._on_unload is not None:
+            # TODO: Create task to eager start for each registered unload callbacks.
             while self._on_unload:
                 if job := self._on_unload.pop()():
                     self.async_create_task(hass, job, eager_start=True)
@@ -1228,6 +1251,7 @@ class ConfigEntry[_DataT = Any]:
             ):
                 # Reauth or Reconfigure flow already in progress for this entry
                 return
+            # TODO: Initialize the reauth flow via ConfigEntriesFlowManager.
             result = await hass.config_entries.flow.async_init(
                 self.domain,
                 context=ConfigFlowContext(
@@ -1406,6 +1430,7 @@ class ConfigEntriesFlowManager(
                 breaks_in_ha_version="2025.12",
             )
 
+        # TODO: Generate a unique ID for the flow to represent the init flow.
         flow_id = ulid_util.ulid_now()
 
         # Avoid starting a config flow on an integration that only supports
@@ -1898,6 +1923,7 @@ class ConfigEntryItems(UserDict[str, ConfigEntry]):
         return entries[0]
 
 
+# TODO: Specific store of core.config_entries file, will load it's file into memory.
 class ConfigEntryStore(storage.Store[dict[str, list[dict[str, Any]]]]):
     """Class to help storing config entry data."""
 
@@ -2138,10 +2164,12 @@ class ConfigEntries:
             entry.async_shutdown()
         self.flow.async_shutdown()
 
+    # TODO: Initialize config entry config.
     async def async_initialize(self) -> None:
         """Initialize config entry config."""
         config = await self._store.async_load()
 
+        # TODO: Register the one time listener to the event bus, will be added to the internal listeners dict to clean up all entries.
         self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._async_shutdown)
 
         if config is None:
@@ -2180,6 +2208,7 @@ class ConfigEntries:
         self._entries = entries
         self.async_update_issues()
 
+    # TODO: Set up a config entry that has state NOT_LOADED.
     async def async_setup(self, entry_id: str, _lock: bool = True) -> bool:
         """Set up a config entry.
 
@@ -2196,13 +2225,16 @@ class ConfigEntries:
 
         # Setup Component if not set up yet
         if entry.domain in self.hass.config.components:
+            # TODO: Use asyncio lock if _lock is True.
             if _lock:
                 async with entry.setup_lock:
+                    # TODO: Set up config entry
                     await entry.async_setup(self.hass)
             else:
                 await entry.async_setup(self.hass)
         else:
             # Setting up the component will set up all its config entries
+            # TODO: Set up the integration for HA core.
             result = await async_setup_component(
                 self.hass, entry.domain, self._hass_config
             )
@@ -3766,12 +3798,14 @@ async def _load_integration(
         raise data_entry_flow.UnknownHandler from err
 
 
+# TODO: Get the flow handler (Subclass of ConfigFlow)
 async def _async_get_flow_handler(
     hass: HomeAssistant, domain: str, hass_config: ConfigType
 ) -> type[ConfigFlow]:
     """Get a flow handler for specified domain."""
 
     # First check if there is a handler registered for the domain
+    # TODO: Returns the registered ConfigFlow subclass for that domain.
     if loader.is_component_module_loaded(hass, f"{domain}.config_flow") and (
         handler := HANDLERS.get(domain)
     ):

@@ -148,6 +148,7 @@ def setup_component(hass: core.HomeAssistant, domain: str, config: ConfigType) -
     ).result()
 
 
+# TODO: Set up integration component (so it is not for platform).
 async def async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -155,6 +156,7 @@ async def async_setup_component(
 
     This method is a coroutine.
     """
+    # TODO: Return if loaded already.
     if domain in hass.config.components:
         return True
 
@@ -164,10 +166,12 @@ async def async_setup_component(
     if existing_setup_future := setup_futures.get(domain):
         return await existing_setup_future
 
+    # TODO: Mark the integration as loading to suspend other coroutines waiting for this integration to be loaded.
     setup_future = hass.loop.create_future()
     setup_futures[domain] = setup_future
 
     try:
+        # TODO: Set up the integration (e.g. load translations, resolve + load dependencies)
         result = await _async_setup_component(hass, domain, config)
         setup_future.set_result(result)
         if setup_done_future := setup_done_futures.pop(domain, None):
@@ -226,6 +230,7 @@ async def _async_process_dependencies(
             continue
         fut = setup_futures.get(dep)
         if fut is None:
+            # TODO: Skip if the dependency is already loaded.
             if dep in hass.config.components:
                 continue
             fut = create_eager_task(
@@ -280,6 +285,7 @@ def _log_error_setup_error(
     async_notify_setup_error(hass, domain, link)
 
 
+# TODO: Set up the integration for HA core.
 async def _async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -288,6 +294,7 @@ async def _async_setup_component(
     This method is a coroutine.
     """
     try:
+        # TODO: Get integration from different sources
         integration = await loader.async_get_integration(hass, domain)
     except loader.IntegrationNotFound:
         _log_error_setup_error(hass, domain, None, "Integration not found.")
@@ -309,12 +316,15 @@ async def _async_setup_component(
 
     log_error = partial(_log_error_setup_error, hass, domain, integration)
 
+    # TODO: If integration is disabled, log error and return False.
     if integration.disabled:
         log_error(f"Dependency is disabled - {integration.disabled}")
         return False
 
     integration_set = {domain}
 
+    # TODO: Load translations if integration has translations and not loaded yet.
+    # TODO: For most cases we expect the translations are already in bootstrap.
     load_translations_task: asyncio.Task[None] | None = None
     if integration.has_translations and not translation.async_translations_loaded(
         hass, integration_set
@@ -327,11 +337,13 @@ async def _async_setup_component(
             translation.async_load_integrations(hass, integration_set), loop=hass.loop
         )
     # Validate all dependencies exist and there are no circular dependencies
+    # TODO: Get all recursive dependency domain names for the target integration.
     if await integration.resolve_dependencies() is None:
         return False
 
     # Process requirements as soon as possible, so we can import the component
     # without requiring imports to be in functions.
+    # TODO: Actuall process the integration's dependencies.
     try:
         await async_process_deps_reqs(hass, config, integration)
     except HomeAssistantError as err:
@@ -566,6 +578,8 @@ async def async_prepare_setup_platform(
     return platform
 
 
+# TODO: Check from HASS data cache to see if target domain is part of the processed dependency set.
+# If not, process the dependencies and requirements for the target domain.
 async def async_process_deps_reqs(
     hass: core.HomeAssistant, config: ConfigType, integration: loader.Integration
 ) -> None:

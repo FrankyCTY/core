@@ -42,6 +42,7 @@ class FlowResultType(StrEnum):
 EVENT_DATA_ENTRY_FLOW_PROGRESSED = "data_entry_flow_progressed"
 EVENT_DATA_ENTRY_FLOW_PROGRESS_UPDATE = "data_entry_flow_progress_update"
 
+# FIXME: Steps in flow (init flow e.g.?) that indicate the flow is not complete.
 FLOW_NOT_COMPLETE_STEPS = {
     FlowResultType.FORM,
     FlowResultType.EXTERNAL_STEP,

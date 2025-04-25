@@ -212,10 +212,13 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
     This function allows a component inside the asyncio loop to reload its
     configuration by itself. Include package merge.
     """
+    # TODO: Loads from config/secrets.yaml: Creates a Secrets helper to handle loading secrets from secrets.yaml properly during parsing.
+    # TODO: Secrets class is from a ha library: https://github.com/home-assistant-libs/annotatedyaml/blob/main/src/annotatedyaml/loader.py
     secrets = Secrets(Path(hass.config.config_dir))
 
     # Not using async_add_executor_job because this is an internal method.
     try:
+        # TODO: Loads the config/configuration.yaml file into a dict.
         config = await hass.loop.run_in_executor(
             None,
             load_yaml_config_file,
@@ -226,6 +229,7 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
         if not (base_exc := exc.__cause__) or not isinstance(base_exc, MarkedYAMLError):
             raise
 
+        # TODO: Rewrite the exception paths to be relative to the hass config dir for easier debugging.
         # Rewrite path to offending YAML file to be relative the hass config dir
         if base_exc.context_mark and base_exc.context_mark.name:
             base_exc.context_mark.name = _relpath(hass, base_exc.context_mark.name)
@@ -233,6 +237,7 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
             base_exc.problem_mark.name = _relpath(hass, base_exc.problem_mark.name)
         raise
 
+    # TODO: Returns a safe, valid configuration dictionary for the system to use.
     invalid_domains = []
     for key in config:
         try:
@@ -244,10 +249,12 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
             _LOGGER.error("Invalid domain '%s'%s", key, suffix)
             invalid_domains.append(key)
     for invalid_domain in invalid_domains:
+        # TODO: Remove invalid domain keys from the config.
         config.pop(invalid_domain)
 
     core_config = config.get(HOMEASSISTANT_DOMAIN, {})
     try:
+        # TODO: Merge and validate packages: configs inside homeassistant: section.
         await merge_packages_config(hass, config, core_config.get(CONF_PACKAGES, {}))
     except vol.Invalid as exc:
         suffix = ""
