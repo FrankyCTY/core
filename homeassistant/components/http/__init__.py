@@ -408,6 +408,7 @@ class HomeAssistantHTTP:
         await async_setup_auth(self.hass, self.app)
 
         setup_headers(self.app, use_x_frame_options)
+        # TODO: Set up CORS related lambda.
         setup_cors(self.app, cors_origins)
 
         if self.ssl_certificate:
@@ -422,10 +423,13 @@ class HomeAssistantHTTP:
         It is optional to instantiate it before registering; this method will
         handle it either way.
         """
+        # TODO: Instantiate the view, if needed to ensure it is an instance, not a class e.g.
         if isinstance(view, type):
             # Instantiate the view, if needed
             view = view()
 
+        # TODO: Each view must have a url attribute.
+        # TODO: Such as URL: Final = "/api/websocket"
         if not hasattr(view, "url"):
             class_name = view.__class__.__name__
             raise AttributeError(f'{class_name} missing required attribute "url"')

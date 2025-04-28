@@ -75,6 +75,7 @@ ALL_SERVICE_DESCRIPTIONS_JSON_CACHE = "websocket_api_all_service_descriptions_js
 _LOGGER = logging.getLogger(__name__)
 
 
+# TODO: Register all the websocket api command handlers with the websocket api.
 @callback
 def async_register_commands(
     hass: HomeAssistant,
@@ -943,6 +944,7 @@ async def handle_integration_wait(
     """Handle wait for integration command."""
 
     domain: str = msg["domain"]
+    # TODO: setup.py: async_wait_component()
     connection.send_result(
         msg["id"], {"integration_loaded": await async_wait_component(hass, domain)}
     )

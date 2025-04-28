@@ -53,6 +53,8 @@ class ActiveConnection:
         "user",
     )
 
+    # TODO: This instance is intialized in auth.py during the auth phase.
+    # TODO: websocket_api/http.py -> websocket_api/auth.py -> websocket_api/connection.py
     def __init__(
         self,
         logger: WebSocketAdapter,
@@ -217,6 +219,8 @@ class ActiveConnection:
             )
             return
 
+        # TODO: SELECT HANDLER based on type field from msg (example: "supported_features")
+        # TODO: If no handler is found, send an error message to the client.
         if not (handler_schema := self.handlers.get(type_)):
             self.logger.info("Received unknown command: %s", type_)
             self.send_message(
@@ -226,6 +230,7 @@ class ActiveConnection:
             )
             return
 
+        # TODO: SELECT HANDLER based on type field from msg (example: "supported_features")
         handler, schema = handler_schema
 
         try:

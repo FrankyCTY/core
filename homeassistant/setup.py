@@ -148,7 +148,7 @@ def setup_component(hass: core.HomeAssistant, domain: str, config: ConfigType) -
     ).result()
 
 
-# TODO: Set up integration component (so it is not for platform).
+# TODO: Set up integration component (not for platform?).
 async def async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -285,7 +285,8 @@ def _log_error_setup_error(
     async_notify_setup_error(hass, domain, link)
 
 
-# TODO: Set up the integration for HA core.
+# TODO: Set up the integration/component for HA core.
+# TODO: Set up the integration (e.g. load translations, resolve + load dependencies)
 async def _async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -405,6 +406,7 @@ async def _async_setup_component(
 
     _LOGGER.info("Setting up %s", domain)
 
+    # TODO: Keep track of the setup starts and finishes.
     with async_start_setup(hass, integration=domain, phase=SetupPhases.SETUP):
         if hasattr(component, "PLATFORM_SCHEMA"):
             # Entity components have their own warning
@@ -421,6 +423,7 @@ async def _async_setup_component(
         task: Awaitable[bool] | None = None
         result: Any | bool = True
         try:
+            # TODO: Execute component's async_setup() or setup() method.
             if hasattr(component, "async_setup"):
                 task = component.async_setup(hass, processed_config)
             elif hasattr(component, "setup"):

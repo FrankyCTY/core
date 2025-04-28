@@ -66,6 +66,7 @@ class WebSocketAdapter(logging.LoggerAdapter):
         return f"[{self.extra['connid']}] {msg}", kwargs
 
 
+# TODO: Used in /api/websocket GET() to handle an active websocket client connection.
 class WebSocketHandler:
     """Handle an active websocket client connection."""
 
@@ -92,6 +93,7 @@ class WebSocketHandler:
         self._hass = hass
         self._loop = hass.loop
         self._request: web.Request = request
+        # TODO: HeartBeat: aiohttp will automatically send a ping frame every 55 seconds.
         self._wsock = web.WebSocketResponse(heartbeat=55)
         self._handle_task: asyncio.Task | None = None
         self._writer_task: asyncio.Task | None = None
@@ -106,10 +108,14 @@ class WebSocketHandler:
         # to use a deque and an asyncio.Future to avoid the overhead of
         # an asyncio.Queue.
         self._message_queue: deque[bytes] = deque()
+        # TODO: Notify the WRITER to continue writing.
         self._ready_future: asyncio.Future[int] | None = None
+        # TODO: Queue size snapshot from last time the queue size has grown
+        # TODO: Would be reset to 0 when scheduler decides to unblock writer to send messages.
         self._release_ready_queue_size: int = 0
         self._async_logging_changed()
 
+    # TODO: Update _debug flag. This used as callback when the hass loglevel changed at runtime.
     @callback
     def _async_logging_changed(self, event: Event | None = None) -> None:
         """Handle logging change."""
@@ -150,17 +156,22 @@ class WebSocketHandler:
         # Exceptions if Socket disconnected or cancelled by connection handler
         try:
             while not wsock.closed:
+                # TODO: IF the message queue is empty, reset the ready_future and wait for it to be resolved to continue writing.
                 if not message_queue:
                     self._ready_future = loop.create_future()
+                    # TODO: Wait for the ready_future to be resolved to continue writing.
                     ready_message_count = await self._ready_future
 
                 if self._closing:
                     return
 
+                # TODO: Update can_coalesce flag in the while loop, as it can be changed.
                 if not can_coalesce:
                     # coalesce may be enabled later in the connection
                     can_coalesce = connection.can_coalesce
 
+                # TODO: NO COALESCING or only 1 message to send
+                # ACTION: Dequeue 1 message and send it.
                 if not can_coalesce or ready_message_count == 1:
                     message = message_queue.popleft()
                     if self._debug:
@@ -168,6 +179,8 @@ class WebSocketHandler:
                     await send_bytes_text(message)
                     continue
 
+                # TODO: COALESCING enabled and multiple messages to send
+                # ACTION: Join all messages in the queue into JSON array, THEN BATCH send them as a single message.
                 coalesced_messages = b"".join((b"[", b",".join(message_queue), b"]"))
                 message_queue.clear()
                 if self._debug:
@@ -198,19 +211,24 @@ class WebSocketHandler:
 
         Async friendly.
         """
+        # TODO: Websocket is closing, prevent new message being sent and flood logs.
         if self._closing:
             # Connection is cancelled, don't flood logs about exceeding
             # max pending messages.
             return
 
+        # TODO: Ensure message is in bytes type for aiohttp low-level websocket api needs, and for our _message_queue: deque[bytes].
         if type(message) is not bytes:
             if isinstance(message, dict):
                 message = message_to_json_bytes(message)
             elif isinstance(message, str):
+                # TODO: Ensures any plain text becomes UTF-8 bytes
                 message = message.encode("utf-8")
 
         message_queue = self._message_queue
+        # TODO: Add requested message to queue
         message_queue.append(message)
+        # TODO: Check is queue size HARD LIMIT exceeded
         if (queue_size_after_add := len(message_queue)) >= MAX_PENDING_MSG:
             self._logger.error(
                 (
@@ -222,26 +240,39 @@ class WebSocketHandler:
                 MAX_PENDING_MSG,
                 message,
             )
+            # TODO: Cancel connection to protect system memory, CPU, and frontend responsiveness (especially in browsers).
             self._cancel()
             return
 
+        # TODO: Schedule batch messages check (_release_ready_future_or_reschedule)
+        # Condition: No message in release ready queue
         if self._release_ready_queue_size == 0:
             # Try to coalesce more messages to reduce the number of writes
+            # TODO: Update _release_ready_queue_size with current queue size.
             self._release_ready_queue_size = queue_size_after_add
+            # TODO: Schedule check task to event loop
             self._loop.call_soon(self._release_ready_future_or_reschedule)
 
         peak_checker_active = self._peak_checker_unsub is not None
 
+        # TODO: Queue backpressure detection
         if queue_size_after_add <= PENDING_MSG_PEAK:
+            # TODO: Case 1 - Queue size was previously over warning PEAK threshold (1024), but now dropped back to normal.
+            # ACTION: Cancel any scheduled peak checker task.
             if peak_checker_active:
                 self._cancel_peak_checker()
             return
 
+        # TODO: Case 2 - Queue size accumulated over warning PEAK threshold (1024)
+        # ACTION: Schedule a one-time call (via async_call_later) to _check_write_peak after PENDING_MSG_PEAK_TIME seconds.
         if not peak_checker_active:
             self._peak_checker_unsub = async_call_later(
                 self._hass, PENDING_MSG_PEAK_TIME, self._check_write_peak
             )
 
+    # TODO: Messages coalesce feature: balances latency vs throughput
+    # TODO: - Delay waking up the writer to allow batching messages together (coalescing).
+    # TODO: - Continue writer process immediately if too many messages are pending (to avoid lag or memory blow-up) by releasing ready_future.
     @callback
     def _release_ready_future_or_reschedule(self) -> None:
         """Release the ready future or reschedule.
@@ -252,6 +283,9 @@ class WebSocketHandler:
         If we reach PENDING_MSG_MAX_FORCE_READY, we will release the ready future
         immediately so avoid the coalesced messages from growing too large.
         """
+        # TODO: Case 1 - No message to handle
+        # Condition: No ready future or the queue is empty
+        # Action: Do nothing 
         if not (ready_future := self._ready_future) or not (
             queue_size := len(self._message_queue)
         ):
@@ -260,19 +294,37 @@ class WebSocketHandler:
         # If we are below the max pending to force ready, and there are new messages
         # in the queue since the last time we tried to release the ready future, we
         # try again later so we can coalesce more messages.
+        # TODO: Case 2 - No need to force send message yet
+        # Condition
+        # - If queue has grown since last check AND
+        # - Queue size below force to send threshold
+        # Action: Reschedule this method to postpone to re-check soon.
         if queue_size > self._release_ready_queue_size < PENDING_MSG_MAX_FORCE_READY:
+            # TODO: Capture the queue size snapshot as the queue size has grown (changed).
             self._release_ready_queue_size = queue_size
             self._loop.call_soon(self._release_ready_future_or_reschedule)
             return
+        # TODO: Case 3 - Continue writer process immediately by releasing the future
+        # At this point:
+        # - We either hit the max threshold.
+        # - Or the queue hasn’t grown.
+        # So we assume batching is done, and wake the writer.
         self._release_ready_queue_size = 0
         if not ready_future.done():
             ready_future.set_result(queue_size)
 
+    # TODO: This function is scheduled for re-check if the message queue SOFT LIMIT is still exceeded
+    # TODO: If YES, cancel connection, something is wrong, either tons of messages sent in very short amount of time (unexpected), or writer/other components not working as expected.
     @callback
     def _check_write_peak(self, _utc_time: dt.datetime) -> None:
         """Check that we are no longer above the write peak."""
+        # TODO: Clear the unsub callback that is set when we schedule this task.
+        # REASON: The checkWritePeak task is now started, and we don't want something to cancel it during this process.
         self._peak_checker_unsub = None
 
+        # TODO: Case 1 - The message queue now is now below warning threshold (1024)
+        # - It was above the threshold, that's this task is scheduled to re-check & handle.
+        # WHAT HAPPENED? Maybe the writer has writes the messages and remove from queue.
         if len(self._message_queue) < PENDING_MSG_PEAK:
             return
 
@@ -287,6 +339,7 @@ class WebSocketHandler:
             PENDING_MSG_PEAK_TIME,
             self._message_queue[-1],
         )
+        # TODO: cancels the connection using _cancel()
         self._cancel()
 
     @callback
@@ -313,6 +366,7 @@ class WebSocketHandler:
 
         try:
             async with asyncio.timeout(10):
+                # TODO: This upgrades the HTTP connection to a WebSocket. (agree upgrade)
                 await wsock.prepare(request)
         except ConnectionResetError:
             # Likely the client disconnected before we prepared the websocket
@@ -326,8 +380,11 @@ class WebSocketHandler:
             return wsock
 
         logger.debug("%s: Connected from %s", self.description, request.remote)
+        # TODO: Register current task so that when hass stop, the task can be canceled in callback '_cancel()'.
+        # - Current task = The task that is running WebSocketHandler.async_handle().
         self._handle_task = asyncio.current_task()
 
+        # TODO: Cancel connection and corresponding state when HASS core stops.
         unsub_stop = hass.bus.async_listen(
             EVENT_HOMEASSISTANT_STOP, self._async_handle_hass_stop
         )
@@ -339,7 +396,9 @@ class WebSocketHandler:
         if TYPE_CHECKING:
             assert writer is not None
 
+        # TODO: Once websocket upgrade accepted, we will TEXT FRAME to client for auth phase e.g.
         send_bytes_text = partial(writer.send_frame, opcode=WSMsgType.TEXT)
+        # TODO: Prepare to start auth phase
         auth = AuthPhase(
             logger, hass, self._send_message, self._cancel, request, send_bytes_text
         )
@@ -347,7 +406,10 @@ class WebSocketHandler:
         disconnect_warn: str | None = None
 
         try:
+            # TODO: Send auth frame to client
             connection = await self._async_handle_auth_phase(auth, send_bytes_text)
+            # TODO: Increase aiohttp writer write buffer limit to avoid backpressure on aiohttp to cause messages stall in queue and cause memory issue.
+            # TODO: NOTE: This is intended to be used after AUTH phrase which ensure user is not a malicious user before increasing the limit.
             self._async_increase_writer_limit(writer)
             await self._async_websocket_command_phase(connection)
         except asyncio.CancelledError:
@@ -363,6 +425,7 @@ class WebSocketHandler:
                 "%s: Unexpected error inside websocket API", self.description
             )
         finally:
+            # TODO: Cancelling the listeners e.g.
             cancel_logging_listener()
             unsub_stop()
 
@@ -385,17 +448,21 @@ class WebSocketHandler:
         send_bytes_text: Callable[[bytes], Coroutine[Any, Any, None]],
     ) -> ActiveConnection:
         """Handle the auth phase of the websocket connection."""
+        # TODO Send auth message
         await send_bytes_text(AUTH_REQUIRED_MESSAGE)
 
         # Auth Phase
         try:
+            # TODO: Waits for up to 10 seconds for the client to respond with an auth message.
             msg = await self._wsock.receive(10)
         except TimeoutError as err:
             raise Disconnect("Did not receive auth message within 10 seconds") from err
 
+        # TODO: If the client closes the connection before authenticating, we disconnect.
         if msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING):
             raise Disconnect("Received close message during auth phase")
 
+        # TODO: Disconnect if WSMsgType.ERROR or unexpected non-text frames as well.
         if msg.type is not WSMsgType.TEXT:
             if msg.type is WSMsgType.ERROR:
                 # msg.data is the exception
@@ -413,20 +480,27 @@ class WebSocketHandler:
 
         if self._debug:
             self._logger.debug("%s: Received %s", self.description, auth_msg_data)
+        # TODO: Pass client auth message to AUTH to handle.
         connection = await auth.async_handle(auth_msg_data)
         # As the webserver is now started before the start
         # event we do not want to block for websocket responses
         #
         # We only start the writer queue after the auth phase is completed
         # since there is no need to queue messages before the auth phase
+        # TODO: ======== POST AUTH PHASE ========
         self._connection = connection
+        # TODO: Start writer queue as AUTH phase is completed.
         self._writer_task = create_eager_task(self._writer(connection, send_bytes_text))
+        # TODO: Increment the authenticated connection count.
         self._hass.data[DATA_CONNECTIONS] = self._hass.data.get(DATA_CONNECTIONS, 0) + 1
+        # TODO: Execute the registered HASS jobs for SIGNAL_WEBSOCKET_CONNECTED.
         async_dispatcher_send(self._hass, SIGNAL_WEBSOCKET_CONNECTED)
 
         self._authenticated = True
         return connection
 
+    # TODO: Increase aiohttp writer write buffer limit to avoid backpressure on aiohttp to cause messages stall in queue and cause memory issue.
+    # TODO: NOTE: This is intended to be used after AUTH phrase which ensure user is not a malicious user before increasing the limit.
     @callback
     def _async_increase_writer_limit(self, writer: WebSocketWriter) -> None:
         #
@@ -464,6 +538,9 @@ class WebSocketHandler:
         # added a way to set the limit, but there is no way to actually
         # reach the code to set the limit, so we have to set it directly.
         #
+        # TODO: This increases the internal buffer size to 1 MiB from the default 16kib, which effectively:
+        # TODO: - aiohttp won’t stall writes until it hits 1 MiB in its own internal buffer.
+        # TODO: - This lets more data get flushed into the OS kernel’s TCP buffer without waiting. (TCP buffer default to be quite large anyway)
         writer._limit = 2**20  # noqa: SLF001
 
     async def _async_websocket_command_phase(
@@ -547,6 +624,8 @@ class WebSocketHandler:
                     hass.data[DATA_CONNECTIONS] -= 1
                     self._connection = None
 
+
+                # TODO: Execute the registered HASS jobs for SIGNAL_WEBSOCKET_DISCONNECTED.
                 async_dispatcher_send(hass, SIGNAL_WEBSOCKET_DISCONNECTED)
 
                 # Break reference cycles to make sure GC can happen sooner

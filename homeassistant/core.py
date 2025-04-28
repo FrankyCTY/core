@@ -72,6 +72,7 @@ from .const import (
     MAX_EXPECTED_ENTITY_IDS,
     MAX_LENGTH_EVENT_EVENT_TYPE,
     MAX_LENGTH_STATE_STATE,
+    STATE_UNKNOWN,
     __version__,
 )
 from .exceptions import (
@@ -350,6 +351,7 @@ class HassJob[**_P, _R_co]:
         self._cancel_on_shutdown = cancel_on_shutdown
         self._cache: dict[str, Any] = {}
         if job_type:
+            # TODO: Pre-set the cached_property when job_type() is invoked, the cached_property will return the pre-set value. We expect job type to be inferred in advance when the job is created to avoid checking it every time when we run the job.
             # Pre-set the cached_property so we
             # avoid the function call
             self._cache["job_type"] = job_type
@@ -377,6 +379,8 @@ class HassJobWithArgs:
     args: Iterable[Any]
 
 
+# TODO: Determine job type HassJobType for callback. (e.g. coroutine function, callback, executor)
+# TODO: This can affect how it is being executed, and help to make the code more efficient (e.g. event loop unblocked)
 def get_hassjob_callable_job_type(target: Callable[..., Any]) -> HassJobType:
     """Determine the job type from the callable."""
     # Check for partials to properly determine if coroutine function
@@ -731,6 +735,8 @@ class HomeAssistant:
         background: bool = False,
     ) -> asyncio.Future[_R] | None: ...
 
+    # TODO: Execute the hass job based on the job type to make the code more efficient.
+    # TODO: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
     @callback
     def _async_add_hass_job[_R](
         self,
@@ -759,23 +765,25 @@ class HomeAssistant:
             task = create_eager_task(
                 hassjob.target(*args), name=hassjob.name, loop=self.loop
             )
-            # TODO: It could be done() after running if it doesn't await anything. Fully synchronous.
+            # TODO: It could be done() after running if means it is actually fully synchronous with no suspension point. (e.g. await)
             if task.done():
                 return task
         elif hassjob.job_type is HassJobType.Callback:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
+            # TODO: Schedule immediate to eventloop.
             self.loop.call_soon(hassjob.target, *args)
             return None
         else:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
-            # Allows to offload blocking or CPU-bound functions to a separate thread or process
+            # TODO: Allows to offload blocking or CPU-bound functions to a separate thread or process
             task = self.loop.run_in_executor(None, hassjob.target, *args)
 
-        # TODO: Add task to HA core internal task list (background or foreground) list, and then return.
+        # TODO: Add task to background task set if background is True, otherwise add to foreground task set.
         task_bucket = self._background_tasks if background else self._tasks
         task_bucket.add(task)
+        # TODO: Remove task from the set when it is done.
         task.add_done_callback(task_bucket.remove)
 
         return task
@@ -918,12 +926,14 @@ class HomeAssistant:
         background: bool = False,
     ) -> asyncio.Future[_R] | None: ...
 
+    # TODO: Execute the hass job based on the job type to make the code more efficient.
+    # TODO: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
     @callback
     def async_run_hass_job[_R](
         self,
         hassjob: HassJob[..., Coroutine[Any, Any, _R] | _R],
         *args: Any,
-        background: bool = False,
+        background: bool = False, # TODO:
     ) -> asyncio.Future[_R] | None:
         """Run a HassJob from within the event loop.
 
@@ -938,12 +948,15 @@ class HomeAssistant:
         # if TYPE_CHECKING to avoid the overhead of constructing
         # the type used for the cast. For history see:
         # https://github.com/home-assistant/core/pull/71960
+        # TODO: If hass job is callback, invoke it immediately as it should be light.
         if hassjob.job_type is HassJobType.Callback:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
             hassjob.target(*args)
             return None
 
+        # TODO: Execute the hass job based on the job type to make the code more efficient.
+        # TODO: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
         return self._async_add_hass_job(hassjob, *args, background=background)
 
     @overload
@@ -1266,6 +1279,9 @@ class HomeAssistant:
             _LOGGER.warning("Shutdown stage '%s': still running: %s", stage, task)
 
 
+# TODO: A correlation mechanism that links together events and state changes triggered by a common source.
+# TODO: This is useful for the LOGBOOK e.g.
+# TODO: https://data.home-assistant.io/docs/context
 class Context:
     """The context that triggered something."""
 
@@ -1826,18 +1842,13 @@ class State:
     ) -> None:
         """Initialize a new state."""
         self._cache: dict[str, Any] = {}
-        state = str(state)
-
         if validate_entity_id and not valid_entity_id(entity_id):
             raise InvalidEntityFormatError(
                 f"Invalid entity id encountered: {entity_id}. "
                 "Format should be <domain>.<object_id>"
             )
-
-        validate_state(state)
-
         self.entity_id = entity_id
-        self.state = state
+        self.state = state if type(state) is str else str(state)
         # State only creates and expects a ReadOnlyDict so
         # there is no need to check for subclassing with
         # isinstance here so we can use the faster type check.
@@ -2267,7 +2278,6 @@ class StateMachine:
         This avoids a race condition where multiple entities with the same
         entity_id are added.
         """
-        entity_id = entity_id.lower()
         if entity_id in self._states_data or entity_id in self._reservations:
             raise HomeAssistantError(
                 "async_reserve must not be called once the state is in the state"
@@ -2304,9 +2314,11 @@ class StateMachine:
 
         This method must be run in the event loop.
         """
+        state = str(new_state)
+        validate_state(state)
         self.async_set_internal(
             entity_id.lower(),
-            str(new_state),
+            state,
             attributes or {},
             force_update,
             context,
@@ -2331,6 +2343,8 @@ class StateMachine:
         and should not be considered a stable API. We will make
         breaking changes to this function in the future and it
         should not be used in integrations.
+
+        Callers are responsible for ensuring the entity_id is lower case.
 
         This method must be run in the event loop.
         """
@@ -2389,6 +2403,16 @@ class StateMachine:
             if TYPE_CHECKING:
                 assert old_state is not None
             attributes = old_state.attributes
+
+        if not same_state and len(new_state) > MAX_LENGTH_STATE_STATE:
+            _LOGGER.error(
+                "State %s for %s is longer than %s, falling back to %s",
+                new_state,
+                entity_id,
+                MAX_LENGTH_STATE_STATE,
+                STATE_UNKNOWN,
+            )
+            new_state = STATE_UNKNOWN
 
         # This is intentionally called with positional only arguments for performance
         # reasons

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from logging import Handler
 from typing import Final, cast
 
 from aiohttp.hdrs import ACCEPT, AUTHORIZATION, CONTENT_TYPE, ORIGIN
@@ -36,8 +37,13 @@ VALID_CORS_TYPES: Final = (Resource, ResourceRoute, StaticResource)
 @callback
 def setup_cors(app: Application, origins: list[str]) -> None:
     """Set up CORS."""
+    # TODO: Installs CORS middleware into the aiohttp app.
+    #  - Intercepts HTTP requests to that route,
+    #  - Adds Access-Control-Allow-Origin, Access-Control-Allow-Methods, etc.
+    #  - Handles OPTIONS preflight requests automatically.
     cors = aiohttp_cors.setup(
         app,
+        # TODO: DEFAULT CORS policies for all hosts.
         defaults={
             host: aiohttp_cors.ResourceOptions(
                 allow_headers=ALLOWED_CORS_HEADERS, allow_methods="*"
@@ -46,10 +52,12 @@ def setup_cors(app: Application, origins: list[str]) -> None:
         },
     )
 
+    # TODO: Track added cors routes to avoid adding the same route PATH multiple times.
     cors_added = set()
 
     def _allow_cors(
         route: AbstractRoute | AbstractResource,
+        # TODO: CORS config is a dict of host -> ResourceOptions.
         config: dict[str, aiohttp_cors.ResourceOptions] | None = None,
     ) -> None:
         """Allow CORS on a route."""
@@ -69,9 +77,14 @@ def setup_cors(app: Application, origins: list[str]) -> None:
         if path_str in cors_added:
             return
 
+        # TODO: Add the route to the cors config.
+        # TODO: If no config passed in: Registers default CORS policies.
         cors.add(route, config)
+
+        # TODO: Add the route path str to local field "cors_added" to avoid adding the same route PATH multiple times.
         cors_added.add(path_str)
 
+    # TODO: For "KEY_ALLOW_ALL_CORS", store a callback that allows any origin ("*") with all methods and headers for the given route.
     app[KEY_ALLOW_ALL_CORS] = lambda route: _allow_cors(
         route,
         {
@@ -81,7 +94,11 @@ def setup_cors(app: Application, origins: list[str]) -> None:
         },
     )
 
+    # TODO: For "KEY_ALLOW_CONFIGURED_CORS", use _allow_cors if specific origins are configured;
+#       otherwise, assign a no-op to skip CORS setup entirely.
     if origins:
+        # TODO: Allow consumer to specify the cors config for callback _allow_cors.
+        # TODO: If no config passed in: Registers default CORS policies.
         app[KEY_ALLOW_CONFIGURED_CORS] = cast(AllowCorsType, _allow_cors)
     else:
         app[KEY_ALLOW_CONFIGURED_CORS] = lambda _: None

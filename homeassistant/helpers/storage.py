@@ -167,7 +167,7 @@ class _StoreManager:
             _LOGGER.debug("%s: Cache miss", key)
             return None
 
-        # TODO: If async_initialize has been called and the key is not in self._files
+        # TODO: If async_initialize (self_files is set in init) has been called and the key is not in self._files
         # then the file does not exist
         if key not in self._files:
             _LOGGER.debug("%s: Cache hit, does not exist", key)
@@ -241,7 +241,9 @@ class _StoreManager:
 
 
 # TODO: Single file storage class, with version and migration support.
-# TODO: 2 layer in memory cache: Load data from internal in memory FILES cache that loads data from `.storage` directory.
+# TODO: 2 layer in memory cache:
+# TODO: First layer: self._data: dict[str, Any]
+# TODO: Second layer: self._manager._data_preload
 @bind_hass
 class Store[_T: Mapping[str, Any] | Sequence[Any]]:
     """Class to help storing data."""
@@ -303,7 +305,7 @@ class Store[_T: Mapping[str, Any] | Sequence[Any]]:
         if self._load_future:
             return await self._load_future
 
-        # TODO: Set the loading in progress future for subsequent requests.
+        # TODO: Set the loading in progress future to allow subsequent requests to await for.
         self._load_future = self.hass.loop.create_future()
         try:
             result = await self._async_load()
@@ -333,7 +335,7 @@ class Store[_T: Mapping[str, Any] | Sequence[Any]]:
     async def _async_load_data(self):
         """Load the data."""
         # Check if we have a pending write
-        # TODO: If there is loaded data.
+        # TODO: CASE 1: If there is loaded data cached in self._data.
         if self._data is not None:
             data = self._data
 
@@ -344,13 +346,14 @@ class Store[_T: Mapping[str, Any] | Sequence[Any]]:
 
             # We make a copy because code might assume it's safe to mutate loaded data
             # and we don't want that to mess with what we're trying to store.
-            # TODO: Make deep copy for mutation to avoid side effects affect others.
+            # TODO: Make deep copy for mutation to avoid side effects affect others consumers that are using the same data (reference).
             data = deepcopy(data)
-        # TODO: There is NO loaded data, try fetch from internal in memory cache.
+        # TODO: CASE 2: Try get json files from internal storage manager cache.
         elif cache := self._manager.async_fetch(self.key):
             exists, data = cache
             if not exists:
                 return None
+        # TODO: CASE 3: Load from '.storage' directory, which will invoke lots of parsing, transformation, etc.
         else:
             try:
                 data = await self.hass.async_add_executor_job(

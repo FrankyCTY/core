@@ -348,6 +348,7 @@ CORE_CONFIG_SCHEMA = vol.All(
 )
 
 
+# TODO: Process the [homeassistant] section from the configuration to ensure things like timezone, latitude, longitude, etc. are set up.
 async def async_process_ha_core_config(hass: HomeAssistant, config: dict) -> None:
     """Process the [homeassistant] section from the configuration.
 

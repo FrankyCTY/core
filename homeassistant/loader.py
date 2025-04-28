@@ -269,6 +269,7 @@ class Manifest(TypedDict, total=False):
     single_config_entry: bool
 
 
+# TODO: Import the config/custom_components/ folder first.
 def async_setup(hass: HomeAssistant) -> None:
     """Set up the necessary data structures."""
     _async_mount_config_dir(hass)
