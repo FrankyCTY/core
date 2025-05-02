@@ -23,19 +23,21 @@ from homeassistant.util.logging import catch_log_exception, log_exception
 from homeassistant.util.signal_type import SignalType as SignalType  # noqa: PLC0414
 
 _LOGGER = logging.getLogger(__name__)
-# TODO: Key in hass.data to store the internal dispatcher.
+# USERNOTE: Key in hass.data to store the internal dispatcher.
 DATA_DISPATCHER = "dispatcher"
 
 
-# TODO: Type of the Internal dispatcher registry
-# TODO: *_Ts: Allow to define argument types for the dispatcher callable.
-# TODO: TYPE: { [signal/str]: { callable → HassJob wrapped the callable for actual dispatching } }”
-# TODO: - Keyed by signal/str and the value is a dict of corresponding { [callable handler] →  HassJob wrapped the callable for actual dispatching }
+# USERNOTE: Type of the Internal dispatcher registry
+# USERNOTE: *_Ts: Allow to define argument types for the dispatcher callable.
+# USERNOTE: TYPE: { [signal/str]: { callable → HassJob wrapped the callable for actual dispatching } }”
+# USERNOTE: - Keyed by signal/str and the value is a dict of corresponding { [callable handler] →  HassJob wrapped the callable for actual dispatching }
 type _DispatcherDataType[*_Ts] = dict[
     SignalType[*_Ts] | str,
     dict[
-        Callable[[*_Ts], Any] | Callable[..., Any],  # TODO: Original callable requested
-        HassJob[..., None | Coroutine[Any, Any, None]] | None,  # TODO: HassJob wrapped the callable for actual dispatching
+        Callable[[*_Ts], Any]
+        | Callable[..., Any],  # USERNOTE: Original callable requested
+        HassJob[..., None | Coroutine[Any, Any, None]]
+        | None,  # USERNOTE: HassJob wrapped the callable for actual dispatching
     ],
 ]
 
@@ -50,9 +52,7 @@ def dispatcher_connect[*_Ts](
 @overload
 @bind_hass
 def dispatcher_connect(
-    hass: HomeAssistant, signal: str
-
-, target: Callable[..., None]
+    hass: HomeAssistant, signal: str, target: Callable[..., None]
 ) -> Callable[[], None]: ...
 @bind_hass  # type: ignore[misc]  # workaround; exclude typing of 2 overload in func def
 def dispatcher_connect[*_Ts](
@@ -168,15 +168,15 @@ def _generate_job[*_Ts](
     signal: SignalType[*_Ts] | str, target: Callable[[*_Ts], Any] | Callable[..., Any]
 ) -> HassJob[..., Coroutine[Any, Any, None] | None]:
     """Generate a HassJob for a signal and target."""
-    # TODO: Determine job type HassJobType for callback. (e.g. coroutine function, callback, executor)
+    # USERNOTE: Determine job type HassJobType for callback. (e.g. coroutine function, callback, executor)
     job_type = get_hassjob_callable_job_type(target)
-    # TODO: Prefix with "dispatcher" to identify it as an internal dispatcher job.
+    # USERNOTE: Prefix with "dispatcher" to identify it as an internal dispatcher job.
     name = f"dispatcher {signal}"
     if job_type is HassJobType.Callback:
         # We will catch exceptions in the callback to avoid
         # wrapping the callback since calling wraps() is more
         # expensive than the whole dispatcher_send process
-        # TODO: In HASS, the fn marked as Callback functions are expected to be small, safe, and fast. Wrapping them in catch_log_exception() adds measurable overhead, and isn’t worth it.
+        # USERNOTE: In HASS, the fn marked as Callback functions are expected to be small, safe, and fast. Wrapping them in catch_log_exception() adds measurable overhead, and isn’t worth it.
         return HassJob(target, name, job_type=job_type)
     return HassJob(
         catch_log_exception(
@@ -201,7 +201,7 @@ def async_dispatcher_send[*_Ts](
 def async_dispatcher_send(hass: HomeAssistant, signal: str, *args: Any) -> None: ...
 
 
-# TODO: Execute the registered HASS jobs for the given SINGAL.
+# USERNOTE: Execute the registered HASS jobs for the given SINGAL.
 @callback
 @bind_hass
 def async_dispatcher_send[*_Ts](
@@ -224,9 +224,9 @@ def async_dispatcher_send[*_Ts](
     async_dispatcher_send_internal(hass, signal, *args)
 
 
-# TODO: Execute the registered HASS jobs for the given SINGAL.
-# TODO: If hass job is callable: Synchronously invoke the callback.
-# TODO: Otherwise: 
+# USERNOTE: Execute the registered HASS jobs for the given SINGAL.
+# USERNOTE: If hass job is callable: Synchronously invoke the callback.
+# USERNOTE: Otherwise:
 @callback
 @bind_hass
 def async_dispatcher_send_internal[*_Ts](
@@ -241,33 +241,33 @@ def async_dispatcher_send_internal[*_Ts](
 
     This method must be run in the event loop.
     """
-    # TODO: If dispatch is NOT set up, exit silently.
+    # USERNOTE: If dispatch is NOT set up, exit silently.
     if (maybe_dispatchers := hass.data.get(DATA_DISPATCHER)) is None:
         return
     dispatchers: _DispatcherDataType[*_Ts] = maybe_dispatchers
-    # TODO: If nobody is listening to this signal, return
+    # USERNOTE: If nobody is listening to this signal, return
     if (target_list := dispatchers.get(signal)) is None:
         return
 
-    # TODO: target_list is a dict of { [callable handler] → HassJob return type }
-    # TODO: WHY use list()? So we create a shallow copy to iterate. AS Python raises a RuntimeError if the dict is modified while iterating over it.
-    # TODO: INTERNAL safeguard: Underlying structure reshuffles if the dict changes (key added/removed) cause iterator's internal index is no longer valid e.g.
+    # USERNOTE: target_list is a dict of { [callable handler] → HassJob return type }
+    # USERNOTE: WHY use list()? So we create a shallow copy to iterate. AS Python raises a RuntimeError if the dict is modified while iterating over it.
+    # USERNOTE: INTERNAL safeguard: Underlying structure reshuffles if the dict changes (key added/removed) cause iterator's internal index is no longer valid e.g.
     for target, job in list(target_list.items()):
-        # TODO: If hass job is not created for this target callback, create one.
+        # USERNOTE: If hass job is not created for this target callback, create one.
         if job is None:
             job = _generate_job(signal, target)
             target_list[target] = job
         # We do not wrap Callback jobs in catch_log_exception since
         # single use dispatchers spend more time wrapping the callback
         # than the actual callback takes to run in many cases.
-        # TODO: In HASS, the fn marked as Callback functions are expected to be small, safe, and fast. Wrapping them in catch_log_exception() adds measurable overhead, and isn’t worth it.
+        # USERNOTE: In HASS, the fn marked as Callback functions are expected to be small, safe, and fast. Wrapping them in catch_log_exception() adds measurable overhead, and isn’t worth it.
         if job.job_type is HassJobType.Callback:
             try:
-                # TODO: Synchronously invoke the callback.
+                # USERNOTE: Synchronously invoke the callback.
                 job.target(*args)
             except Exception:  # noqa: BLE001
                 log_exception(partial(_format_err, signal, target), *args)  # type: ignore[arg-type]
         else:
-            # TODO: Execute the hass job based on the job type to make the code more efficient.
-            # TODO: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
+            # USERNOTE: Execute the hass job based on the job type to make the code more efficient.
+            # USERNOTE: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
             hass.async_run_hass_job(job, *args)

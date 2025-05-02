@@ -218,7 +218,7 @@ class RegistryEntry:
         """Return if entry is hidden."""
         return self.hidden_by is not None
 
-    # TODO: Create a registry entry model for presentation needs
+    # USERNOTE: Create a registry entry model for presentation needs
     @property
     def _as_display_dict(self) -> dict[str, Any] | None:
         """Return a partial dict representation of the entry.
@@ -751,7 +751,7 @@ class EntityRegistry(BaseRegistry):
         self._store = EntityRegistryStore(
             hass,
             STORAGE_VERSION_MAJOR,
-            STORAGE_KEY,  # TODO: "core.entity_registry"
+            STORAGE_KEY,  # USERNOTE: "core.entity_registry"
             atomic_writes=True,
             minor_version=STORAGE_VERSION_MINOR,
         )

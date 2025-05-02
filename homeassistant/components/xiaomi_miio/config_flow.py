@@ -85,7 +85,7 @@ class OptionsFlowHandler(OptionsFlow):
 
         settings_schema = vol.Schema(
             {
-                # TODO: For the boolean value input from checkbox in the dialog.
+                # USERNOTE: For the boolean value input from checkbox in the dialog.
                 vol.Optional(
                     CONF_CLOUD_SUBDEVICES,
                     default=self.config_entry.options.get(CONF_CLOUD_SUBDEVICES, False),
@@ -93,7 +93,7 @@ class OptionsFlowHandler(OptionsFlow):
             }
         )
 
-        # TODO: step_id argument is going to be deprecated in the future.
+        # USERNOTE: step_id argument is going to be deprecated in the future.
         return self.async_show_form(
             step_id="init", data_schema=settings_schema, errors=errors
         )

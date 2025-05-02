@@ -1,1 +1,0 @@
-## Websocket api authentication phase

@@ -167,7 +167,7 @@ def check_threads() -> None:
         sys.stderr.write("Failed to count non-daemonic threads.\n")
 
 
-# TODO: See notes/setup.md
+# USERNOTE: See notes/setup.md
 def main() -> int:
     """Start Home Assistant."""
     validate_python()

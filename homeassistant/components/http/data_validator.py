@@ -64,7 +64,7 @@ class RequestDataValidator:
                 raw_data = {}
 
             try:
-                # TODO: Validate against schema.
+                # USERNOTE: Validate against schema.
                 data: dict[str, Any] = self._schema(raw_data)
             except vol.Invalid as err:
                 _LOGGER.error("Data does not match schema: %s", err)
@@ -72,7 +72,7 @@ class RequestDataValidator:
                     f"Message format incorrect: {err}", HTTPStatus.BAD_REQUEST
                 )
 
-            # TODO: Execute the wrapped method.
+            # USERNOTE: Execute the wrapped method.
             return await method(view, request, data, *args, **kwargs)
 
         return wrapper

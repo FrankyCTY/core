@@ -123,20 +123,20 @@ BLOCKED_CUSTOM_INTEGRATIONS: dict[str, BlockedIntegration] = {
     ),
 }
 
-# TODO: Cache of module or components obj (integration obj that implements ComponentProtocol).
+# USERNOTE: Cache of module or components obj (integration obj that implements ComponentProtocol).
 DATA_COMPONENTS: HassKey[dict[str, ModuleType | ComponentProtocol]] = HassKey(
     "components"
 )
-# TODO: Integration value could be a future, which means the integration is still being loaded.
+# USERNOTE: Integration value could be a future, which means the integration is still being loaded.
 DATA_INTEGRATIONS: HassKey[
     dict[str, Integration | asyncio.Future[Integration | IntegrationNotFound]]
 ] = HassKey("integrations")
-# TODO: Cached platforms that are missing. Meaning could not be loaded. Access to this platform will raise an exception.
+# USERNOTE: Cached platforms that are missing. Meaning could not be loaded. Access to this platform will raise an exception.
 DATA_MISSING_PLATFORMS: HassKey[dict[str, bool]] = HassKey("missing_platforms")
-# TODO: Integration value could be a future, which means the integration is still being loaded. (See _get_platform_cached_or_raise())
+# USERNOTE: Integration value could be a future, which means the integration is still being loaded. (See _get_platform_cached_or_raise())
 DATA_CUSTOM_COMPONENTS: HassKey[
     dict[str, Integration] | asyncio.Future[dict[str, Integration]]
-] = HassKey("custom_components")  # TODO: Custom integrations
+] = HassKey("custom_components")  # USERNOTE: Custom integrations
 DATA_PRELOAD_PLATFORMS: HassKey[list[str]] = HassKey("preload_platforms")
 PACKAGE_CUSTOM_COMPONENTS = "custom_components"
 PACKAGE_BUILTIN = "homeassistant.components"
@@ -269,7 +269,7 @@ class Manifest(TypedDict, total=False):
     single_config_entry: bool
 
 
-# TODO: Import the config/custom_components/ folder first.
+# USERNOTE: Import the config/custom_components/ folder first.
 def async_setup(hass: HomeAssistant) -> None:
     """Set up the necessary data structures."""
     _async_mount_config_dir(hass)
@@ -319,7 +319,7 @@ def _get_custom_components(hass: HomeAssistant) -> dict[str, Integration]:
     }
 
 
-# TODO: Loads custom integrations into hass data cache if not already loaded.
+# USERNOTE: Loads custom integrations into hass data cache if not already loaded.
 async def async_get_custom_components(
     hass: HomeAssistant,
 ) -> dict[str, Integration]:
@@ -365,7 +365,7 @@ async def async_get_config_flows(
     return flows
 
 
-# TODO: Component = integration. So this protocol is the behavior interface of an integration.
+# USERNOTE: Component = integration. So this protocol is the behavior interface of an integration.
 class ComponentProtocol(Protocol):
     """Define the format of an integration."""
 
@@ -658,7 +658,7 @@ class Integration:
     """An integration in Home Assistant."""
 
     @classmethod
-    # TODO: Prepare integration data by looking up the integration in the directory.
+    # USERNOTE: Prepare integration data by looking up the integration in the directory.
     def resolve_from_root(
         cls, hass: HomeAssistant, root_module: ModuleType, domain: str
     ) -> Integration | None:
@@ -681,7 +681,7 @@ class Integration:
             # Avoid the listdir for virtual integrations
             # as they cannot have any platforms
             is_virtual = manifest.get("integration_type") == "virtual"
-            # TODO: Instantiate loader.integration instance.
+            # USERNOTE: Instantiate loader.integration instance.
             integration = cls(
                 hass,
                 f"{root_module.__name__}.{domain}",
@@ -763,7 +763,7 @@ class Integration:
     ) -> None:
         """Initialize an integration."""
         self.hass = hass
-        # TODO: Path to the integration directory.
+        # USERNOTE: Path to the integration directory.
         self.pkg_path = pkg_path
         self.file_path = file_path
         self.manifest = manifest
@@ -778,7 +778,7 @@ class Integration:
         self._platforms_to_preload = hass.data[DATA_PRELOAD_PLATFORMS]
         self._component_future: asyncio.Future[ComponentProtocol] | None = None
         self._import_futures: dict[str, asyncio.Future[ModuleType]] = {}
-        # TODO: This cache references the HASS data cache (in memory cache).
+        # USERNOTE: This cache references the HASS data cache (in memory cache).
         self._cache = hass.data[DATA_COMPONENTS]
         self._missing_platforms_cache = hass.data[DATA_MISSING_PLATFORMS]
         self._top_level_files = top_level_files or set()
@@ -861,7 +861,7 @@ class Integration:
         """Return the integration type."""
         return self.manifest.get("integration_type", "hub")
 
-    # TODO: Should import integration in the executor?
+    # USERNOTE: Should import integration in the executor?
     @cached_property
     def import_executor(self) -> bool:
         """Import integration in the executor."""
@@ -956,7 +956,7 @@ class Integration:
         """Return if all dependencies have been resolved."""
         return self._all_dependencies is not None
 
-    # TODO: Resolve all dependencies for this integration.
+    # USERNOTE: Resolve all dependencies for this integration.
     async def resolve_dependencies(self) -> set[str] | None:
         """Resolve all dependencies."""
         if self._all_dependencies is not None:
@@ -967,7 +967,7 @@ class Integration:
         result = await resolve_integrations_dependencies(self.hass, (self,))
         return result.get(self.domain)
 
-    # TODO: Cache of module or components obj (integration obj that implements ComponentProtocol).
+    # USERNOTE: Cache of module or components obj (integration obj that implements ComponentProtocol).
     async def async_get_component(self) -> ComponentProtocol:
         """Return the component.
 
@@ -976,11 +976,11 @@ class Integration:
         otherwise it will load it in the event loop.
         """
         domain = self.domain
-        # TODO: Returns from HASS data cache if it exists.
+        # USERNOTE: Returns from HASS data cache if it exists.
         if domain in (cache := self._cache):
             return cache[domain]
 
-        # TODO: If it is loading in progress, wait for it.
+        # USERNOTE: If it is loading in progress, wait for it.
         if self._component_future:
             return await self._component_future
 
@@ -990,12 +990,12 @@ class Integration:
         # Some integrations fail on import because they call functions incorrectly.
         # So we do it before validating config to catch these errors.
         load_executor = self.import_executor and (
-            # TODO: Check if the integration module is already loaded by Python interpreter
+            # USERNOTE: Check if the integration module is already loaded by Python interpreter
             self.pkg_path not in sys.modules
-            # TODO: OR Check if the integration's config_flow module is already loaded by Python interpreter
+            # USERNOTE: OR Check if the integration's config_flow module is already loaded by Python interpreter
             or (self.config_flow and f"{self.pkg_path}.config_flow" not in sys.modules)
         )
-        # TODO: If no need to use executor to load.
+        # USERNOTE: If no need to use executor to load.
         if not load_executor:
             comp = self._get_component()
             if debug:
@@ -1006,7 +1006,7 @@ class Integration:
                 )
             return comp
 
-        # TODO: Create a future object for other coroutines to wait for while loading.
+        # USERNOTE: Create a future object for other coroutines to wait for while loading.
         self._component_future = self.hass.loop.create_future()
         try:
             try:
@@ -1020,7 +1020,7 @@ class Integration:
                 _LOGGER.debug(
                     "Failed to import %s in executor", self.domain, exc_info=ex
                 )
-                # TODO: If importing in the executor deadlocks because there is a circular
+                # USERNOTE: If importing in the executor deadlocks because there is a circular
                 # dependency, we fall back to the event loop.
                 comp = self._get_component()
             self._component_future.set_result(comp)
@@ -1064,14 +1064,14 @@ class Integration:
             return cache[domain]
         return self._get_component()
 
-    # TODO: Dynamically load the integration module and cast it to ComponentProtocol.
+    # USERNOTE: Dynamically load the integration module and cast it to ComponentProtocol.
     def _get_component(self, preload_platforms: bool = False) -> ComponentProtocol:
         """Return the component."""
-        # TODO: This cache references the HASS data cache (in memory cache).
+        # USERNOTE: This cache references the HASS data cache (in memory cache).
         cache = self._cache
         domain = self.domain
         try:
-            # TODO: Import the integration module and cast it to ComponentProtocol.
+            # USERNOTE: Import the integration module and cast it to ComponentProtocol.
             cache[domain] = cast(
                 ComponentProtocol, importlib.import_module(self.pkg_path)
             )
@@ -1086,7 +1086,7 @@ class Integration:
             )
             raise ImportError(f"Exception importing {self.pkg_path}") from err
 
-        # TODO: Try preload modules in the integration directory.
+        # USERNOTE: Try preload modules in the integration directory.
         if preload_platforms:
             for platform_name in self.platforms_exists(self._platforms_to_preload):
                 with suppress(ImportError):
@@ -1101,7 +1101,7 @@ class Integration:
             for platform_name in platform_names
         }
 
-    # TODO: Load target module from the integration directory
+    # USERNOTE: Load target module from the integration directory
     # - load `homeassistant.components.<domain>.<platform_name>`
     async def async_get_platform(self, platform_name: str) -> ModuleType:
         """Return a platform for an integration."""
@@ -1125,7 +1125,7 @@ class Integration:
         import_futures: list[tuple[str, asyncio.Future[ModuleType]]] = []
 
         for platform_name in platform_names:
-            # TODO: Returns from Integration obj cache if found
+            # USERNOTE: Returns from Integration obj cache if found
             if platform := self._get_platform_cached_or_raise(platform_name):
                 platforms[platform_name] = platform
                 continue
@@ -1149,7 +1149,7 @@ class Integration:
             self._import_futures[platform_name] = import_future
             import_futures.append((platform_name, import_future))
 
-        # TODO: Load target platforms in the executor or event loop.
+        # USERNOTE: Load target platforms in the executor or event loop.
         if load_executor_platforms or load_event_loop_platforms:
             if debug := _LOGGER.isEnabledFor(logging.DEBUG):
                 start = time.perf_counter()
@@ -1210,7 +1210,7 @@ class Integration:
 
         return platforms
 
-    # TODO: Retrieve integration platform module from HASS data cache.
+    # USERNOTE: Retrieve integration platform module from HASS data cache.
     def _get_platform_cached_or_raise(self, platform_name: str) -> ModuleType | None:
         """Return a platform for an integration from cache."""
         full_name = f"{self.domain}.{platform_name}"
@@ -1236,7 +1236,7 @@ class Integration:
         """Return a platform for an integration from cache."""
         return self._cache.get(f"{self.domain}.{platform_name}")  # type: ignore[return-value]
 
-    # TODO: Retrieve integration module from HASS data cache.
+    # USERNOTE: Retrieve integration module from HASS data cache.
     def get_platform(self, platform_name: str) -> ModuleType:
         """Return a platform for an integration."""
         if platform := self._get_platform_cached_or_raise(platform_name):
@@ -1330,7 +1330,7 @@ def _version_blocked(
     return True
 
 
-# TODO:Retrieve requested integrations (by domains) from
+# USERNOTE:Retrieve requested integrations (by domains) from
 def _resolve_integrations_from_root(
     hass: HomeAssistant, root_module: ModuleType, domains: Iterable[str]
 ) -> dict[str, Integration]:
@@ -1363,7 +1363,7 @@ def async_get_loaded_integration(hass: HomeAssistant, domain: str) -> Integratio
 
 async def async_get_integration(hass: HomeAssistant, domain: str) -> Integration:
     """Get integration."""
-    # TODO: Get integration from HASS data (cache)
+    # USERNOTE: Get integration from HASS data (cache)
     cache = hass.data[DATA_INTEGRATIONS]
     if type(int_or_fut := cache.get(domain)) is Integration:
         return int_or_fut
@@ -1374,9 +1374,9 @@ async def async_get_integration(hass: HomeAssistant, domain: str) -> Integration
     raise int_or_exc
 
 
-# TODO: Loading integrations from HASS data cache by taking care of that case that
+# USERNOTE: Loading integrations from HASS data cache by taking care of that case that
 # some integrations might not be loaded yet and needs to be awaited.
-# TODO: Note this function tries to retrieve integrations from:
+# USERNOTE: Note this function tries to retrieve integrations from:
 # - HASS data cache (built-in integrations)
 # - Custom components (custom integrations)
 # - Directory (components)
@@ -1386,16 +1386,16 @@ async def async_get_integrations(
     """Get integrations."""
     cache = hass.data[DATA_INTEGRATIONS]
     results: dict[str, Integration | Exception] = {}
-    # TODO: The integration requested in this function invocation.
+    # USERNOTE: The integration requested in this function invocation.
     needed: dict[str, asyncio.Future[Integration | IntegrationNotFound]] = {}
-    # TODO: Put a future as a placeholder to mark it as "pending", so any
+    # USERNOTE: Put a future as a placeholder to mark it as "pending", so any
     # other consumers can await it until this function is finished.
-    # TODO: In-progress integrations that are still being loaded/retrieved.
+    # USERNOTE: In-progress integrations that are still being loaded/retrieved.
     in_progress: dict[str, asyncio.Future[Integration | IntegrationNotFound]] = {}
 
-    # TODO: Stage 1: Retrieve integrations from HASS data cache that stores built in integrations.
+    # USERNOTE: Stage 1: Retrieve integrations from HASS data cache that stores built in integrations.
     for domain in domains:
-        # TODO: int_or_fut could be a future, which we define it as in-progress.
+        # USERNOTE: int_or_fut could be a future, which we define it as in-progress.
         int_or_fut = cache.get(domain)
         # Integration is never subclassed, so we can check for type
         if type(int_or_fut) is Integration:
@@ -1403,30 +1403,30 @@ async def async_get_integrations(
         elif int_or_fut:
             if TYPE_CHECKING:
                 assert isinstance(int_or_fut, asyncio.Future)
-            # TODO: Integrations from HASS data cache could be a future, which we define it as in-progress as it is still being loaded.
+            # USERNOTE: Integrations from HASS data cache could be a future, which we define it as in-progress as it is still being loaded.
             in_progress[domain] = int_or_fut
         elif "." in domain:
             results[domain] = ValueError(f"Invalid domain {domain}")
         else:
-            # TODO: Put a future as a placeholder to mark it as "pending", so any
+            # USERNOTE: Put a future as a placeholder to mark it as "pending", so any
             # other consumers can await it.
             needed[domain] = cache[domain] = hass.loop.create_future()
 
     if in_progress:
-        # TODO: Wait for all in-progress integrations to finish loading.
+        # USERNOTE: Wait for all in-progress integrations to finish loading.
         await asyncio.wait(in_progress.values())
         # Here we retrieve the results we waited for
         # instead of reading them from the cache since
         # reading from the cache will have a race if
         # the integration gets removed from the cache
         # because it was not found.
-        # TODO: Intentionally retrieve data in second cache (in_progress) to avoid
+        # USERNOTE: Intentionally retrieve data in second cache (in_progress) to avoid
         # race condition that things has changed in the HASS data cache.
         for domain, future in in_progress.items():
-            # TODO: Set the result to the results dict once the async loading integration is finished.
+            # USERNOTE: Set the result to the results dict once the async loading integration is finished.
             results[domain] = future.result()
 
-    # TODO: If no integration is needed, return the results.
+    # USERNOTE: If no integration is needed, return the results.
     # - No requested integrations OR
     # - All requested integartions have been retrieved into "results" dict.
     if not needed:
@@ -1435,7 +1435,7 @@ async def async_get_integrations(
     # First we look for custom components
     # Instead of using resolve_from_root we use the cache of custom
     # components to find the integration.
-    # TODO: Stage 2: Try to retrieve the rest from the HASS custom integrations cache.
+    # USERNOTE: Stage 2: Try to retrieve the rest from the HASS custom integrations cache.
     custom = await async_get_custom_components(hass)
     for domain, future in needed.items():
         if integration := custom.get(domain):
@@ -1450,8 +1450,8 @@ async def async_get_integrations(
     if needed:
         from . import components  # pylint: disable=import-outside-toplevel
 
-        # TODO: Stage 3: Retrieve the rest from the integrations directory.
-        # TODO: Uses thread pool to avoid blocking the event loop, as we know this process requires blocking I/O as it opens files e.g. in order to get all the information to form the integration object.
+        # USERNOTE: Stage 3: Retrieve the rest from the integrations directory.
+        # USERNOTE: Uses thread pool to avoid blocking the event loop, as we know this process requires blocking I/O as it opens files e.g. in order to get all the information to form the integration object.
         integrations = await hass.async_add_executor_job(
             _resolve_integrations_from_root, hass, components, needed
         )
@@ -1459,7 +1459,7 @@ async def async_get_integrations(
             if integration := integrations.get(domain):
                 results[domain] = cache[domain] = integration
                 future.set_result(integration)
-            # TODO: Stage 4: If integration is not found, set the exception as value..
+            # USERNOTE: Stage 4: If integration is not found, set the exception as value..
             else:
                 # We don't cache that it doesn't exist as configuration
                 # validation that relies on integrations being loaded
@@ -1499,8 +1499,8 @@ class _ResolveDependenciesCache(_ResolveDependenciesCacheProtocol):
         itg._all_dependencies = all_dependencies  # noqa: SLF001
 
 
-# TODO: Resolve dependencies for integrations.
-# TODO: Result dict -> Key: integration domain, Value: set of dependencies (domain names).
+# USERNOTE: Resolve dependencies for integrations.
+# USERNOTE: Result dict -> Key: integration domain, Value: set of dependencies (domain names).
 async def resolve_integrations_dependencies(
     hass: HomeAssistant, integrations: Iterable[Integration]
 ) -> dict[str, set[str]]:
@@ -1538,8 +1538,8 @@ async def resolve_integrations_after_dependencies(
     )
 
 
-# TODO: Resolve dependencies for integrations.
-# TODO: Result dict -> Key: integration domain, Value: set of dependencies (domain names).
+# USERNOTE: Resolve dependencies for integrations.
+# USERNOTE: Result dict -> Key: integration domain, Value: set of dependencies (domain names).
 async def _resolve_integrations_dependencies(
     hass: HomeAssistant,
     name: str,
@@ -1566,7 +1566,7 @@ async def _resolve_integrations_dependencies(
             _LOGGER.error("Unable to %s for %s: %s", name, itg.domain, exc)
             return None
 
-    # TODO: For each requested integration, create a task to resolve dependencies.
+    # USERNOTE: For each requested integration, create a task to resolve dependencies.
     resolve_dependencies_tasks = {
         itg.domain: create_eager_task(
             _resolve_deps_catch_exceptions(itg),
@@ -1585,7 +1585,7 @@ async def _resolve_integrations_dependencies(
     }
 
 
-# TODO: Resolve all recursive dependency domain names for an integration.
+# USERNOTE: Resolve all recursive dependency domain names for an integration.
 async def _resolve_integration_dependencies(
     itg: Integration,
     *,
@@ -1791,14 +1791,14 @@ def _async_mount_config_dir(hass: HomeAssistant) -> None:
     Async friendly but not a coroutine.
     """
 
-    # TODO: Place the config dir path at the beginning of the sys.path list so that when we import custom_components, it will be imported from the config dir.
-    # TODO: This ensure when we bootstrap ha core, we load the config/custom_components/ folder first.
+    # USERNOTE: Place the config dir path at the beginning of the sys.path list so that when we import custom_components, it will be imported from the config dir.
+    # USERNOTE: This ensure when we bootstrap ha core, we load the config/custom_components/ folder first.
     sys.path.insert(0, hass.config.config_dir)
     with suppress(ImportError):
         import custom_components  # pylint: disable=import-outside-toplevel  # noqa: F401
-    # TODO: Remove after importing as the process might import the custom_components from other places later.
+    # USERNOTE: Remove after importing as the process might import the custom_components from other places later.
     sys.path.remove(hass.config.config_dir)
-    # TODO: Clear the cache so that the next time we import custom_components, it can be imported from the config dir.
+    # USERNOTE: Clear the cache so that the next time we import custom_components, it can be imported from the config dir.
     sys.path_importer_cache.pop(hass.config.config_dir, None)
 
 

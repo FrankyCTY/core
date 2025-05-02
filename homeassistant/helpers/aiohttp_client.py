@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 DATA_CONNECTOR: HassKey[dict[tuple[bool, int, str], aiohttp.BaseConnector]] = HassKey(
     "aiohttp_connector"
 )
-# TODO: The key for the session pool (verify_ssl, family, ssl_cipher).
+# USERNOTE: The key for the session pool (verify_ssl, family, ssl_cipher).
 DATA_CLIENTSESSION: HassKey[dict[tuple[bool, int, str], aiohttp.ClientSession]] = (
     HassKey("aiohttp_clientsession")
 )
@@ -109,7 +109,7 @@ class ChunkAsyncStreamIterator:
         return rv[0]
 
 
-# TODO: The entry point to get or create a shared session, keyed by:
+# USERNOTE: The entry point to get or create a shared session, keyed by:
 # - verify_ssl
 # - family
 # - ssl_cipher
@@ -125,11 +125,11 @@ def async_get_clientsession(
 
     This method must be run in the event loop.
     """
-    # TODO: Make a key for connector or session pool.
+    # USERNOTE: Make a key for connector or session pool.
     session_key = _make_key(verify_ssl, family, ssl_cipher)
     sessions = hass.data.setdefault(DATA_CLIENTSESSION, {})
 
-    # TODO: Add session to the pool if not already present in hass data cache.
+    # USERNOTE: Add session to the pool if not already present in hass data cache.
     if session_key not in sessions:
         session = _async_create_clientsession(
             hass,
@@ -208,7 +208,7 @@ def _async_create_clientsession(
         WARN_CLOSE_MSG,
     )
 
-    # TODO: Register the method that will be called when the session is closed.
+    # USERNOTE: Register the method that will be called when the session is closed.
     # Usually would be to detach tha client session from the connector.
     if auto_cleanup_method:
         auto_cleanup_method(hass, clientsession)
@@ -302,7 +302,7 @@ def _async_register_clientsession_shutdown(
     config_entry.async_on_unload(_async_close_websession)
 
 
-# TODO: Close the target client session on Home Assistant shutdown.
+# USERNOTE: Close the target client session on Home Assistant shutdown.
 @callback
 def _async_register_default_clientsession_shutdown(
     hass: HomeAssistant, clientsession: aiohttp.ClientSession
@@ -320,7 +320,7 @@ def _async_register_default_clientsession_shutdown(
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_CLOSE, _async_close_websession)
 
 
-# TODO: Generate the key for the session pool (verify_ssl, family, ssl_cipher).
+# USERNOTE: Generate the key for the session pool (verify_ssl, family, ssl_cipher).
 @callback
 def _make_key(
     verify_ssl: bool = True,
@@ -331,7 +331,7 @@ def _make_key(
     return (verify_ssl, family, ssl_cipher)
 
 
-# TODO: Summary
+# USERNOTE: Summary
 # Resolves domain names asynchronously with optional DNS caching and TTL.
 
 # Limits concurrent DNS lookups to prevent redundant queries.

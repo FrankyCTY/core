@@ -41,7 +41,7 @@ current_request: ContextVar[Request | None] = ContextVar(
 )
 
 
-# TODO: Ensure the handler has proper auth check e.g., and response in expected format.
+# USERNOTE: Ensure the handler has proper auth check e.g., and response in expected format.
 def request_handler_factory(
     hass: HomeAssistant, view: HomeAssistantView, handler: Callable
 ) -> Callable[[web.Request], Awaitable[web.StreamResponse]]:
@@ -53,14 +53,14 @@ def request_handler_factory(
 
     async def handle(request: web.Request) -> web.StreamResponse:
         """Handle incoming request."""
-        # TODO: If hass core is in stopping state, the request handler during that period should return a 503 error to client.
+        # USERNOTE: If hass core is in stopping state, the request handler during that period should return a 503 error to client.
         if hass.is_stopping:
             return web.Response(status=HTTPStatus.SERVICE_UNAVAILABLE)
 
-        # TODO: Check if the request is authenticated.
+        # USERNOTE: Check if the request is authenticated.
         authenticated = request.get(KEY_AUTHENTICATED, False)
 
-        # TODO: Not authenticated, raise a 401 error.
+        # USERNOTE: Not authenticated, raise a 401 error.
         if view.requires_auth and not authenticated:
             raise HTTPUnauthorized
 
@@ -73,7 +73,7 @@ def request_handler_factory(
             )
 
         try:
-            # TODO: Invoke the handler.
+            # USERNOTE: Invoke the handler.
             if is_coroutinefunction:
                 result = await handler(request, **request.match_info)
             else:
@@ -85,27 +85,27 @@ def request_handler_factory(
         except exceptions.Unauthorized as err:
             raise HTTPUnauthorized from err
 
-        # TODO: ========== Post handler logic. ==========
+        # USERNOTE: ========== Post handler logic. ==========
 
-        # TODO: The handler is returning ideal response object, return it directly.
+        # USERNOTE: The handler is returning ideal response object, return it directly.
         if isinstance(result, web.StreamResponse):
             # The method handler returned a ready-made Response, how nice of it
             return result
 
         status_code = HTTPStatus.OK
-        # TODO: Extract status code from the result for later use if it is a tuple.
+        # USERNOTE: Extract status code from the result for later use if it is a tuple.
         if isinstance(result, tuple):
             result, status_code = result
 
-        # TODO: Result is bytes, return a response with the body.
+        # USERNOTE: Result is bytes, return a response with the body.
         if isinstance(result, bytes):
             return web.Response(body=result, status=status_code)
 
-        # TODO: Result is string, return a response with the text.
+        # USERNOTE: Result is string, return a response with the text.
         if isinstance(result, str):
             return web.Response(text=result, status=status_code)
 
-        # TODO: Result is None, return a response with an empty body and body in bytes.
+        # USERNOTE: Result is None, return a response with an empty body and body in bytes.
         if result is None:
             return web.Response(body=b"", status=status_code)
 
@@ -133,7 +133,7 @@ class HomeAssistantView:
 
         return Context(user_id=user.id)
 
-    # TODO: Helper to return json response.
+    # USERNOTE: Helper to return json response.
     @staticmethod
     def json(
         result: Any,
@@ -174,7 +174,7 @@ class HomeAssistantView:
             data["code"] = message_code
         return self.json(data, status_code, headers=headers)
 
-    # TODO: Register the view with a router, also set up proper pre/post handler logic, and register to CORS middleware.
+    # USERNOTE: Register the view with a router, also set up proper pre/post handler logic, and register to CORS middleware.
     def register(
         self, hass: HomeAssistant, app: web.Application, router: web.UrlDispatcher
     ) -> None:
@@ -184,19 +184,19 @@ class HomeAssistantView:
         routes: list[AbstractRoute] = []
 
         for method in ("get", "post", "delete", "put", "patch", "head", "options"):
-            # TODO: Try to get the http verb handler method from the view instance, if not found, continue.
-            # TODO: If found, continue to create a request handler factory.
+            # USERNOTE: Try to get the http verb handler method from the view instance, if not found, continue.
+            # USERNOTE: If found, continue to create a request handler factory.
             if not (handler := getattr(self, method, None)):
                 continue
 
-            # TODO: Ensure the handler has proper auth check, and response in expected format.
+            # USERNOTE: Ensure the handler has proper auth check, and response in expected format.
             handler = request_handler_factory(hass, self, handler)
 
-            # TODO: Register the route with the router.
+            # USERNOTE: Register the route with the router.
             routes.extend(router.add_route(method, url, handler) for url in urls)
 
         # Use `get` because CORS middleware is not be loaded in emulated_hue
-        # TODO: Ensure registered routes are properly configured with CORS policies such as  respond to cross-origin requests (e.g., from browsers) with the appropriate Access-Control-* headers.
+        # USERNOTE: Ensure registered routes are properly configured with CORS policies such as  respond to cross-origin requests (e.g., from browsers) with the appropriate Access-Control-* headers.
         if self.cors_allowed:
             allow_cors = app.get(KEY_ALLOW_ALL_CORS)
         else:

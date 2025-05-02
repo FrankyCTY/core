@@ -348,7 +348,7 @@ CORE_CONFIG_SCHEMA = vol.All(
 )
 
 
-# TODO: Process the [homeassistant] section from the configuration to ensure things like timezone, latitude, longitude, etc. are set up.
+# USERNOTE: Process the [homeassistant] section from the configuration to ensure things like timezone, latitude, longitude, etc. are set up.
 async def async_process_ha_core_config(hass: HomeAssistant, config: dict) -> None:
     """Process the [homeassistant] section from the configuration.
 
@@ -581,7 +581,7 @@ class Config:
         # based components
         self.all_components: set[str] = set()
 
-        # TODO: Set of loaded components
+        # USERNOTE: Set of loaded components
         self.components = _ComponentSet(self.top_level_components, self.all_components)
 
         # API (HTTP) server configuration

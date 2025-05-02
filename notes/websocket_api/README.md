@@ -1,3 +1,65 @@
+# WebSocket API Documentation
+
+## Overview
+
+The WebSocket API serves as the primary real-time communication channel between Home Assistant's core and its frontend clients. This documentation covers the key aspects of the WebSocket implementation.
+
+## Core Concepts
+
+1. [Message Handling](message_handling.md)
+   - Message queuing and processing
+   - Writer task management
+   - Connection lifecycle
+
+2. [Message Coalescing](message_coalescing.md)
+   - Event loop integration
+   - Message batching
+   - Performance optimization
+
+3. [Backpressure Management](backpressure_management.md)
+   - Queue monitoring
+   - Resource protection
+   - Connection termination
+
+4. [Authentication](authentication.md)
+   - Auth phase implementation
+   - Security measures
+   - Connection state management
+
+## Implementation Details
+
+### Key Components
+
+- `WebSocketHandler`: Core connection and message management
+- `ActiveConnection`: Authenticated session handling
+- `AuthPhase`: Authentication process
+- `const.py`: Configuration constants
+
+### File Structure
+
+```
+websocket_api/
+├── http.py          # WebSocket protocol implementation
+├── connection.py    # Connection management
+├── auth.py         # Authentication handling
+├── commands.py     # Command processing
+├── const.py        # Configuration constants
+└── messages.py     # Message formatting
+```
+
+## Related Documentation
+
+- [Overall Architecture](../overall.md)
+- [Glossary](../glossary.md)
+- [Learning Log](../learning_log.md)
+
+## Next Steps
+
+1. Review the [Message Handling](message_handling.md) documentation for core concepts
+2. Explore [Message Coalescing](message_coalescing.md) for performance optimization details
+3. Study [Backpressure Management](backpressure_management.md) for resource protection
+4. Understand the [Authentication](authentication.md) process 
+
 # Set up
 
 The websocket_api `__init__.py:async_setup()` is invoked in `setup.py's _async_setup_component()` when components/integrations are set up in the loop.
