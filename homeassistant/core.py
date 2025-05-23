@@ -457,7 +457,7 @@ class HomeAssistant:
         self.import_executor = InterruptibleThreadPoolExecutor(
             max_workers=1, thread_name_prefix="ImportExecutor"
         )
-        self.loop_thread_id = getattr(self.loop, "_thread_id")
+        self.loop_thread_id = self.loop._thread_id  # type: ignore[attr-defined] # noqa: SLF001
 
     # USERNOTE: Ensure the operation is running in the event loop thread.
     def verify_event_loop_thread(self, what: str) -> None:
