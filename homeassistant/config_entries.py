@@ -653,7 +653,7 @@ class ConfigEntry[_DataT = Any]:
         """Return a storage fragment for this entry."""
         return json_fragment(json_bytes_sorted(self.as_dict()))
 
-    # USERNOTE: Set up a config entry.
+    # USERNOTE: Set up a config entry by invoking integration's async_setup_entry()
     # USERNOTE: CONDITION: If it is NOT a platform-forwarded entry, then:
     # - Update the config entry runtime state to track the set up progress.
     # - Load the config flow platform.
@@ -680,7 +680,7 @@ class ConfigEntry[_DataT = Any]:
         finally:
             current_entry.set(None)
 
-    # USERNOTE: Set up a config entry.
+    # USERNOTE: Set up a config entry by invoking integration's async_setup_entry()
     # USERNOTE: CONDITION: If it is NOT a platform-forwarded entry, then:
     # - Update the config entry runtime state to track the set up progress.
     # - Load the config flow platform.
@@ -2637,8 +2637,7 @@ class ConfigEntries:
         it can load multiple platforms at once and does not require a separate
         import executor job for each platform.
         """
-        # LLM: Load integration metadata to access platform loading capabilities
-        # This provides access to the integration's platform modules and loading state
+        # USERNOTE: Load/Retrieve integration by entry domain.
         integration = await loader.async_get_integration(self.hass, entry.domain)
 
         # LLM: Ensure platform modules are imported before proceeding with setup
@@ -2647,6 +2646,7 @@ class ConfigEntries:
             # LLM: Pause setup phase tracking to indicate we're waiting for platform imports
             # This helps with startup timing analysis and prevents misleading setup duration metrics
             with async_pause_setup(self.hass, SetupPhases.WAIT_IMPORT_PLATFORMS):
+                # USERNOTE: Load all the platforms of the config entry referencing integration.
                 await integration.async_get_platforms(platforms)
 
         # LLM: Handle setup locking to prevent concurrent modification of config entry state
@@ -2665,10 +2665,14 @@ class ConfigEntries:
                         f"to be in the {ConfigEntryState.LOADED} state"
                     )
                 # LLM: Execute platform setup while holding the lock to ensure atomicity
+                # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+                # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
                 await self._async_forward_entry_setups_locked(entry, platforms)
         else:
             # LLM: Lock is already held (likely by the same task), proceed with setup
             # This handles the case where platform setup is called from within entry setup
+            # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+            # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
             await self._async_forward_entry_setups_locked(entry, platforms)
 
             # If the lock was held when we stated, and it was released during
@@ -2681,6 +2685,8 @@ class ConfigEntries:
                     entry, "async_forward_entry_setups"
                 )
 
+    # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+    # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
     async def _async_forward_entry_setups_locked(
         self, entry: ConfigEntry, platforms: Iterable[Platform | str]
     ) -> None:
@@ -2698,6 +2704,8 @@ class ConfigEntries:
             )
         )
 
+    # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+    # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
     async def _async_forward_entry_setup(
         self,
         entry: ConfigEntry,
@@ -2707,6 +2715,7 @@ class ConfigEntries:
         """Forward the setup of an entry to a different component."""
         # Setup Component if not set up yet
         # USERNOTE: Ensure the platform domain we want to forward to another component is set up, if not, we will set it up now.
+        # USERNOTE: The platform name is the domain name of the platform. (e.g. conersation, light)
         if domain not in self.hass.config.components:
             with async_pause_setup(self.hass, SetupPhases.WAIT_BASE_PLATFORM_SETUP):
                 result = await async_setup_component(
@@ -2720,16 +2729,17 @@ class ConfigEntries:
             # If this is a late setup, we need to make sure the platform is loaded
             # so we do not end up waiting for when the EntityComponent calls
             # async_prepare_setup_platform
-            # USERNOTE: Ensure the the domain of the integration that originally created the ConfigEntry is set up (preloaded).
+            # USERNOTE: Ensure the main integration that originally created the ConfigEntry is set up (preloaded).
             integration = await loader.async_get_integration(self.hass, entry.domain)
-            # USERNOTE: Then ensure the platform is loaded.
+            # USERNOTE: Then ensure the platforms of the main integration is loaded.
             if not integration.platforms_are_loaded((domain,)):
                 with async_pause_setup(self.hass, SetupPhases.WAIT_IMPORT_PLATFORMS):
                     await integration.async_get_platform(domain)
 
-        # USERNOTE: Retrieve the integration from cache that we expect to be already loaded.
+        # USERNOTE: Retrieve the "platform integration" from cache that we expect to be already loaded at this point.
         integration = loader.async_get_loaded_integration(self.hass, domain)
-        # USERNOTE: Set up the config entry
+        # USERNOTE: This perform the so called "forward" process.
+        # Essentally just use the main integration's config entry to set up the platform's domain integration.
         await entry.async_setup(self.hass, integration=integration)
         return True
 

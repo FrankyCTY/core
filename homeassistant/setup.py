@@ -45,6 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 ATTR_COMPONENT: Final = "component"
 
 
+# USERNOTE: Tracks currently ongoing or failed component setups.
 # _DATA_SETUP is a dict, indicating domains which are currently
 # being setup or which failed to setup:
 # - Tasks are added to _DATA_SETUP by `async_setup_component`, the key is the domain
@@ -52,6 +53,11 @@ ATTR_COMPONENT: Final = "component"
 # - Tasks are removed from _DATA_SETUP if setup was successful, that is,
 #   the task returned True.
 _DATA_SETUP: HassKey[dict[str, asyncio.Future[bool]]] = HassKey("setup_tasks")
+
+# USERNOTE: This subtle in memory structure is used to allow other consumer to await the setup of a component.
+# - Always added at the start of the setup plan during async_set_domains_to_be_loaded.
+# - Always removed when the setup ends — no matter what.
+# - Safe for other parts of the system to await without hanging forever.
 
 # _DATA_SETUP_DONE is a dict, indicating components which will be setup:
 # - Events are added to _DATA_SETUP_DONE during bootstrap by
@@ -209,15 +215,19 @@ async def _async_process_dependencies(
     dependencies_tasks: dict[str, asyncio.Future[bool]] = {}
 
     for dep in integration.dependencies:
+        # USERNOTE: Look up from in progress set up tracker dict to see if the dependency is already in progress.
         fut = setup_futures.get(dep)
         if fut is None:
+            # USERNOTE: Skip if the dependency is already loaded successfully.
             if dep in hass.config.components:
                 continue
+            # USERNOTE: If the dependency is not in progress and not loaded yet, then create a new task to set up the dependency.
             fut = create_eager_task(
                 async_setup_component(hass, dep, config),
                 name=f"setup {dep} as dependency of {integration.domain}",
                 loop=hass.loop,
             )
+        # USERNOTE: If the dependency set up is already in progress, then skip it, and add it to the dependencies_tasks for subsequent check requirements.
         dependencies_tasks[dep] = fut
 
     to_be_loaded = hass.data.get(_DATA_SETUP_DONE, {})
@@ -303,7 +313,6 @@ def _log_error_setup_error(
 # - Set up all associated config entries (via `async_setup_locked`)
 # - Register the integration as loaded and fire `EVENT_COMPONENT_LOADED`
 # - Clean up setup tracking state for the domain
-
 
 # Returns:
 #     True if the integration was successfully set up; False otherwise.
@@ -461,6 +470,7 @@ async def _async_setup_component(
                 log_error("No setup or config entry setup function defined.")
                 return False
 
+            # USERNOTE: Execute the set up (async or in executor) with a timeout.
             if task:
                 async with hass.timeout.async_timeout(SLOW_SETUP_MAX_WAIT, domain):
                     result = await task
@@ -512,6 +522,7 @@ async def _async_setup_component(
 
     # USERNOTE: Retrieve all config entries for the target domain.
     # If there are any config entries, then set them up.
+    # USERNOTE: Config entries are loaded form disk into memory even before integrations are loaded, but they are only being set up in here.
     if entries := hass.config_entries.async_entries(
         domain, include_ignore=False, include_disabled=False
     ):

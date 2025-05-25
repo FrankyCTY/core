@@ -1120,6 +1120,8 @@ class Integration:
         platforms = await self.async_get_platforms((platform_name,))
         return platforms[platform_name]
 
+
+    # USERNOTE: Load all the platforms for "this" integration.
     async def async_get_platforms(
         self, platform_names: Iterable[Platform | str]
     ) -> dict[str, ModuleType]:
@@ -1133,16 +1135,23 @@ class Integration:
         import_futures: list[tuple[str, asyncio.Future[ModuleType]]] = []
 
         for platform_name in platform_names:
-            # USERNOTE: Returns from Integration obj cache if found
+            # USERNOTE: Returns from Integration obj cache if found,
+            # otherwise raise ImportError.
             if platform := self._get_platform_cached_or_raise(platform_name):
                 platforms[platform_name] = platform
                 continue
 
             # Another call to async_get_platforms is already importing this platform
+            # USERNOTE: If the platform is already in progress, then add it to the in_progress_imports dict to track the import operation instead of duplicating the import operation that is in progress.
             if future := self._import_futures.get(platform_name):
                 in_progress_imports[platform_name] = future
                 continue
 
+            # USERNOTE: Queue the platform import to the executor IF:
+            # - We flagged to use import_executor (Default to TRUE) AND
+            # - The platform is not already loaded into memory (in hass.config.components) AND
+            # - The platform is not already loaded into sys.modules (in hass.sys_modules)
+            # USERNOTE: Otherwise, queue the platform import to the event loop.
             full_name = f"{domain}.{platform_name}"
             if (
                 self.import_executor
@@ -1154,6 +1163,7 @@ class Integration:
                 load_event_loop_platforms.append(platform_name)
 
             import_future = self.hass.loop.create_future()
+            # USERNOTE: Use future to present the import operation is in progress which allow other consumers to wait for future signal to complete instead of duplicating the import operation.
             self._import_futures[platform_name] = import_future
             import_futures.append((platform_name, import_future))
 
@@ -1163,6 +1173,7 @@ class Integration:
                 start = time.perf_counter()
 
             try:
+                # USERNOTE: Use interruptible thread pool executor with max worker set to 1 to execute the import callable.
                 if load_executor_platforms:
                     try:
                         platforms.update(
@@ -1183,6 +1194,7 @@ class Integration:
                         # dependency, we fall back to the event loop.
                         load_event_loop_platforms.extend(load_executor_platforms)
 
+                # USERNOTE: This execute the load_platforms in the event loop.
                 if load_event_loop_platforms:
                     platforms.update(self._load_platforms(platform_names))
 
@@ -1212,6 +1224,7 @@ class Integration:
                         time.perf_counter() - start,
                     )
 
+        # USERNOTE: Suspend to wait for the in_progress_imports to be resolved.
         if in_progress_imports:
             for platform_name, future in in_progress_imports.items():
                 platforms[platform_name] = await future
@@ -1219,6 +1232,7 @@ class Integration:
         return platforms
 
     # USERNOTE: Retrieve integration platform module from HASS data cache.
+    # If the platform is not found from cache, then raise ModuleNotFoundError.
     def _get_platform_cached_or_raise(self, platform_name: str) -> ModuleType | None:
         """Return a platform for an integration from cache."""
         # USERNOTE: Joined domain and platform name as key as it is platform of that domain.

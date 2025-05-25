@@ -168,9 +168,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             ResponseInputTextParam(type="input_text", text=call.data[CONF_PROMPT])
         ]
 
-        # LLM: File processing function for multi-modal inputs
-        # Purpose: Validates and encodes file attachments for OpenAI API
-        # Caveats: Restricted to images and PDFs, requires HA file access permissions
+        # LLM: File processing function for multi-modal inputs, it will validate and encode file attachments for OpenAI API
+        # - Restricted to images and PDFs, requires HA file access permissions
+        # - Appends the file attachments to the content list, which will later be included as part of the same user message.
         def append_files_to_content() -> None:
             for filename in call.data[CONF_FILENAMES]:
                 # LLM: Security check - ensure file is in allowed directories
@@ -185,7 +185,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 if not Path(filename).exists():
                     raise HomeAssistantError(f"`{filename}` does not exist")
 
-                # LLM: Encode file and determine how to present it to OpenAI
+                # LLM: Encode file as base64 version of UTF-8 encoded content, and determine how to present it to OpenAI
                 mime_type, base64_file = encode_file(filename)
                 if "image/" in mime_type:
                     # LLM: Add image content for vision-capable models
@@ -328,8 +328,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 # LLM: Config entry setup function - the main entry point for modern integrations
 # Purpose: Initializes OpenAI client, validates credentials, and sets up platforms
-# Caveats: Can fail if API key is invalid or OpenAI service is unreachable
-# Role in Scope: Essential bootstrap function that enables all integration functionality
 async def async_setup_entry(hass: HomeAssistant, entry: OpenAIConfigEntry) -> bool:
     """Set up OpenAI Conversation from a config entry."""
     # LLM: Create authenticated OpenAI client using stored API key
@@ -373,10 +371,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenAIConfigEntry) -> bo
     return True
 
 
-# LLM: Config entry unload function for clean integration shutdown
-# Purpose: Properly tears down platforms and cleans up resources
-# Caveats: Must mirror the setup process to avoid orphaned entities
-# Role in Scope: Ensures graceful integration lifecycle management
+# LLM: Config entry unload function for clean integration shutdown to properly tears down platforms and cleans up resources.
+# USERNOTE: Must mirror the setup process to avoid orphaned entities
+# USERNOTE: Ensures graceful integration lifecycle management
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload OpenAI."""
     # LLM: Unload all platforms that were set up during entry setup
