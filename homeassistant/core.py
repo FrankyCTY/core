@@ -898,6 +898,7 @@ class HomeAssistant:
 
         return task
 
+    # USERNOTE: Use interruptible thread pool executor with max worker set to 1 to execute the import callable.
     @callback
     def async_add_import_executor_job[*_Ts, _T](
         self, target: Callable[[*_Ts], _T], *args: *_Ts
@@ -906,6 +907,8 @@ class HomeAssistant:
 
         The future returned from this method must be awaited in the event loop.
         """
+        # USERNOTE: Use interruptible thread pool executor with max worker set to 1 to execute the import callable.
+        # USERNOTE: This executor has timeout configured e.g.
         return self.loop.run_in_executor(self.import_executor, target, *args)
 
     @overload

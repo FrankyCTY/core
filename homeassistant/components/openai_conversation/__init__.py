@@ -56,14 +56,23 @@ from .const import (
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_GENERATE_CONTENT = "generate_content"
 
+# LLM: Platform constants define which HA platforms this integration provides
+# The conversation platform enables this integration to act as a conversation agent
 PLATFORMS = (Platform.CONVERSATION,)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+# LLM: Type alias for config entries that store OpenAI client in runtime_data
+# This provides type safety for accessing the authenticated OpenAI client
 type OpenAIConfigEntry = ConfigEntry[openai.AsyncClient]
 
 
+# LLM: Utility function for multi-modal file processing
+# Purpose: Converts local files to base64 data URLs for OpenAI API consumption
+# Caveats: Only supports images and PDFs, requires file system access
+# Role in Scope: Enables multi-modal conversations by preparing file attachments
 def encode_file(file_path: str) -> tuple[str, str]:
     """Return base64 version of file contents."""
+    # LLM: Detect MIME type to determine how OpenAI should process the file
     mime_type, _ = guess_file_type(file_path)
     if mime_type is None:
         mime_type = "application/octet-stream"
@@ -71,14 +80,25 @@ def encode_file(file_path: str) -> tuple[str, str]:
         return (mime_type, base64.b64encode(image_file.read()).decode("utf-8"))
 
 
+# LLM: Integration setup function for YAML-based configuration (legacy support)
+# Purpose: Registers domain-level services and sets up integration-wide functionality
+# Caveats: Called only for YAML setup, modern integrations use config entries
+# Role in Scope: Provides programmatic access to OpenAI capabilities outside conversation flow
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up OpenAI Conversation."""
 
+    # LLM: Service handler for DALL-E image generation
+    # Purpose: Allows users to generate images via Home Assistant services
+    # Caveats: Requires valid config entry, validates file access permissions
+    # Role in Scope: Provides direct API access separate from conversation interface
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with dall-e."""
+        # LLM: Extract and validate the config entry reference from service call
         entry_id = call.data["config_entry"]
         entry = hass.config_entries.async_get_entry(entry_id)
 
+        # LLM: Ensure the config entry exists and belongs to this domain
+        # This prevents cross-domain service calls and ensures proper client access
         if entry is None or entry.domain != DOMAIN:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -86,9 +106,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
+        # LLM: Retrieve the authenticated OpenAI client from config entry runtime data
         client: openai.AsyncClient = entry.runtime_data
 
         try:
+            # LLM: Call OpenAI DALL-E API with user-specified parameters
+            # Uses DALL-E 3 model with fixed settings for simplicity
             response: ImagesResponse = await client.images.generate(
                 model="dall-e-3",
                 prompt=call.data[CONF_PROMPT],
@@ -101,16 +124,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except openai.OpenAIError as err:
             raise HomeAssistantError(f"Error generating image: {err}") from err
 
+        # LLM: Validate that OpenAI returned a usable image URL
+        # API can succeed but return empty data in edge cases
         if not response.data or not response.data[0].url:
             raise HomeAssistantError("No image returned")
 
         return response.data[0].model_dump(exclude={"b64_json"})
 
+    # LLM: Service handler for ChatGPT content generation
+    # Purpose: Provides direct access to GPT models with file attachment support
+    # Caveats: Handles multi-modal inputs, validates file permissions and types
+    # Role in Scope: Complements conversation interface with programmatic API access
     async def send_prompt(call: ServiceCall) -> ServiceResponse:
         """Send a prompt to ChatGPT and return the response."""
+        # LLM: Extract and validate config entry for this service call
         entry_id = call.data["config_entry"]
         entry = hass.config_entries.async_get_entry(entry_id)
 
+        # LLM: Ensure valid config entry to prevent unauthorized API access
         if entry is None or entry.domain != DOMAIN:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -118,25 +149,37 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
+        # LLM: Get model configuration from entry options with fallback to defaults
         model: str = entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         client: openai.AsyncClient = entry.runtime_data
 
+        # LLM: Initialize message content with user's text prompt
+        # OpenAI's new response format requires structured input parameters
         content: ResponseInputMessageContentListParam = [
             ResponseInputTextParam(type="input_text", text=call.data[CONF_PROMPT])
         ]
 
+        # LLM: File processing function for multi-modal inputs
+        # Purpose: Validates and encodes file attachments for OpenAI API
+        # Caveats: Restricted to images and PDFs, requires HA file access permissions
         def append_files_to_content() -> None:
             for filename in call.data[CONF_FILENAMES]:
+                # LLM: Security check - ensure file is in allowed directories
+                # Prevents unauthorized file system access via service calls
                 if not hass.config.is_allowed_path(filename):
                     raise HomeAssistantError(
                         f"Cannot read `{filename}`, no access to path; "
                         "`allowlist_external_dirs` may need to be adjusted in "
                         "`configuration.yaml`"
                     )
+                # LLM: Verify file exists before attempting to read it
                 if not Path(filename).exists():
                     raise HomeAssistantError(f"`{filename}` does not exist")
+
+                # LLM: Encode file and determine how to present it to OpenAI
                 mime_type, base64_file = encode_file(filename)
                 if "image/" in mime_type:
+                    # LLM: Add image content for vision-capable models
                     content.append(
                         ResponseInputImageParam(
                             type="input_image",
@@ -145,6 +188,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                         )
                     )
                 elif "application/pdf" in mime_type:
+                    # LLM: Add PDF content for document analysis
                     content.append(
                         ResponseInputFileParam(
                             type="input_file",
@@ -153,19 +197,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                         )
                     )
                 else:
+                    # LLM: Reject unsupported file types to prevent API errors
                     raise HomeAssistantError(
                         "Only images and PDF are supported by the OpenAI API,"
                         f"`{filename}` is not an image file or PDF"
                     )
 
+        # LLM: Process file attachments in executor to avoid blocking the event loop
+        # File I/O operations can be slow and should not block async operations
         if CONF_FILENAMES in call.data:
             await hass.async_add_executor_job(append_files_to_content)
 
+        # LLM: Structure the complete message for OpenAI's response format
         messages: ResponseInputParam = [
             EasyInputMessageParam(type="message", role="user", content=content)
         ]
 
         try:
+            # LLM: Build API request parameters from user configuration
+            # Combines entry options with call data for complete request
             model_args = {
                 "model": model,
                 "input": messages,
@@ -180,6 +230,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 "store": False,
             }
 
+            # LLM: Add reasoning effort for OpenAI's "o" series models (o1, o3, etc.)
+            # These models support enhanced reasoning capabilities with effort control
             if model.startswith("o"):
                 model_args["reasoning"] = {
                     "effort": entry.options.get(
@@ -187,6 +239,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     )
                 }
 
+            # LLM: Call OpenAI API with configured parameters
             response: Response = await client.responses.create(**model_args)
 
         except openai.OpenAIError as err:
@@ -196,6 +249,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         return {"text": response.output_text}
 
+    # LLM: Register the content generation service with Home Assistant
+    # Enables programmatic access to GPT models with multi-modal support
     hass.services.async_register(
         DOMAIN,
         SERVICE_GENERATE_CONTENT,
@@ -216,6 +271,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
 
+    # LLM: Register the image generation service with Home Assistant
+    # Provides direct access to DALL-E capabilities outside conversation flow
     hass.services.async_register(
         DOMAIN,
         SERVICE_GENERATE_IMAGE,
@@ -241,31 +298,59 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+# LLM: Config entry setup function - the main entry point for modern integrations
+# Purpose: Initializes OpenAI client, validates credentials, and sets up platforms
+# Caveats: Can fail if API key is invalid or OpenAI service is unreachable
+# Role in Scope: Essential bootstrap function that enables all integration functionality
 async def async_setup_entry(hass: HomeAssistant, entry: OpenAIConfigEntry) -> bool:
     """Set up OpenAI Conversation from a config entry."""
+    # LLM: Create authenticated OpenAI client using stored API key
+    # Uses Home Assistant's HTTP client for consistent networking behavior
     client = openai.AsyncOpenAI(
+        # USERNOTE: Expected to be the openai api key from data dict of the config entry.
         api_key=entry.data[CONF_API_KEY],
         http_client=get_async_client(hass),
     )
 
     # Cache current platform data which gets added to each request (caching done by library)
+    # USERNOTE: OpenAI client lazily builds headers on first request, this eargly starts building the headers and prevents delays when we actually make the first request, which would then be cached using `@lru_cache(maxsize=None)` internally.
+    # USERNOTE: Use executor as it could be a CPU bound blocking operation:
+    # - Fetching OS/environment-level details
+    # - Possibly disk I/O for user-agent templates
     _ = await hass.async_add_executor_job(client.platform_headers)
 
     try:
+        # LLM: Validate API credentials by attempting to list available models
+        # Uses short timeout to fail fast on connectivity or auth issues
         await hass.async_add_executor_job(client.with_options(timeout=10.0).models.list)
     except openai.AuthenticationError as err:
+        # LLM: Log auth errors but don't raise - allows retry during reconfigure
         LOGGER.error("Invalid API key: %s", err)
         return False
     except openai.OpenAIError as err:
+        # LLM: Temporary failures should trigger config entry retry mechanism
         raise ConfigEntryNotReady(err) from err
 
+    # LLM: Store authenticated client in runtime data for platform access
+    # This makes the client available to conversation entities and services
+    # USERNOTE: Purpose:
+    # - Prevents repeated re-initialization of expensive objects like API clients.
+    # - Ensures service handlers and platforms can access the same initialized resources.
     entry.runtime_data = client
 
+    # LLM: Set up the conversation platform which provides the AI agent functionality
+    # This creates the conversation entity that integrates with HA's conversation system
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
 
+# LLM: Config entry unload function for clean integration shutdown
+# Purpose: Properly tears down platforms and cleans up resources
+# Caveats: Must mirror the setup process to avoid orphaned entities
+# Role in Scope: Ensures graceful integration lifecycle management
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload OpenAI."""
+    # LLM: Unload all platforms that were set up during entry setup
+    # This removes the conversation entity and cleans up registrations
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

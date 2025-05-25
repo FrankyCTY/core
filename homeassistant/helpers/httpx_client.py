@@ -72,6 +72,11 @@ class HassHttpXAsyncClient(httpx.AsyncClient):
 
 
 @callback
+# LLM: HTTP client factory for Home Assistant integrations
+# Purpose: Creates a configured httpx.AsyncClient with HA-specific defaults and lifecycle management
+# Caveats: Must be called from event loop; auto_cleanup=False requires manual client management
+# Side Effects: Registers shutdown handlers when auto_cleanup=True, modifies client.aclose behavior
+# Role in Scope: Central factory for all HTTP clients in HA, ensures consistent configuration and cleanup
 def create_async_httpx_client(
     hass: HomeAssistant,
     verify_ssl: bool = True,
@@ -86,11 +91,15 @@ def create_async_httpx_client(
 
     This method must be run in the event loop.
     """
+    # LLM: Configure SSL context based on verification requirements
+    # Determines whether to use secure SSL verification or bypass for testing/development
     ssl_context = (
         client_context(ssl_cipher_list)
         if verify_ssl
         else create_no_verify_ssl_context(ssl_cipher_list)
     )
+    # LLM: Create client with HA-specific configuration and user-provided overrides
+    # Uses custom HassHttpXAsyncClient to prevent integrations from managing lifecycle
     client = HassHttpXAsyncClient(
         verify=ssl_context,
         headers={USER_AGENT: SERVER_SOFTWARE},
@@ -98,12 +107,18 @@ def create_async_httpx_client(
         **kwargs,
     )
 
+    # LLM: Preserve original close method before wrapping it with warning
+    # Needed for proper cleanup during shutdown while preventing integration misuse
     original_aclose = client.aclose
 
+    # LLM: Wrap close method to warn developers about improper client lifecycle management
+    # Prevents integrations from closing shared HTTP clients which could break other components
     client.aclose = warn_use(  # type: ignore[method-assign]
         client.aclose, "closes the Home Assistant httpx client"
     )
 
+    # LLM: Register automatic cleanup on HA shutdown if requested
+    # Ensures HTTP connections are properly closed when HA stops, preventing resource leaks
     if auto_cleanup:
         _async_register_async_client_shutdown(hass, client, original_aclose)
 
@@ -125,4 +140,5 @@ def _async_register_async_client_shutdown(
         """Close httpx client."""
         await original_aclose()
 
+    # USERNOTE: Invoke close handler to close the client on HA shutdown.
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_CLOSE, _async_close_client)

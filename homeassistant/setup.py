@@ -148,7 +148,7 @@ def setup_component(hass: core.HomeAssistant, domain: str, config: ConfigType) -
     ).result()
 
 
-# USERNOTE: Set up integration component (not for platform?).
+# USERNOTE: Set up integration component (including platform).
 async def async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -480,12 +480,15 @@ async def _async_setup_component(
     # call to avoid a deadlock when forwarding platforms
     hass.config.components.add(domain)
 
+    # USERNOTE: Retrieve all config entries for the target domain.
+    # If there are any config entries, we set them up.
     if entries := hass.config_entries.async_entries(
         domain, include_ignore=False, include_disabled=False
     ):
         await asyncio.gather(
             *(
                 create_eager_task(
+                    # USERNOTE: Set up config entry with a lock to avoid concurrent setup on the same config entry.
                     entry.async_setup_locked(hass, integration=integration),
                     name=(
                         f"config entry setup {entry.title} {entry.domain} "
