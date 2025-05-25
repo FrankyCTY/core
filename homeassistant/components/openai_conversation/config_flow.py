@@ -129,6 +129,9 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
+    # USERNOTE: This configure the option flow, and allow the config entry's options to be edited.
+    # USERNOTE: An Options Flow is a user interface-driven setup wizard (flow) that allows editing runtime configuration options of an integration after it has been installed.
+    # https://developers.home-assistant.io/docs/config_entries_options_flow_handler
     @staticmethod
     def async_get_options_flow(
         config_entry: ConfigEntry,

@@ -148,7 +148,7 @@ def setup_component(hass: core.HomeAssistant, domain: str, config: ConfigType) -
     ).result()
 
 
-# USERNOTE: Set up integration component (including platform).
+# USERNOTE: Set up integration component (including corresponding platforms).
 async def async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -171,7 +171,7 @@ async def async_setup_component(
     setup_futures[domain] = setup_future
 
     try:
-        # USERNOTE: Set up the integration (e.g. load translations, resolve + load dependencies)
+        # USERNOTE: Set up the integration (e.g. load translations, resolve + load dependencies, config flow, config entries related to the integration e.g.)
         result = await _async_setup_component(hass, domain, config)
         setup_future.set_result(result)
         if setup_done_future := setup_done_futures.pop(domain, None):
@@ -285,8 +285,28 @@ def _log_error_setup_error(
     async_notify_setup_error(hass, domain, link)
 
 
-# USERNOTE: Set up the integration/component for HA core.
-# USERNOTE: Set up the integration (e.g. load translations, resolve + load dependencies)
+# USERNOTE: Set up a Home Assistant integration (component) based on its domain.
+
+# Handles full setup lifecycle for an integration, including dependency loading,
+# configuration validation, and config entry initialization.
+
+# Steps performed:
+# - Resolve the integration (from core, custom, or external packages)
+# - Load translations if not already loaded
+# - Resolve and validate integration dependencies
+# - Install Python requirements via `manifest.json`
+# - Import and load the integration module (`async_get_component`)
+# - Validate and normalize YAML configuration (via `config.py` or CONFIG_SCHEMA)
+# - Log and handle configuration errors with structured feedback
+# - Run the integration's `async_setup()` or `setup()` method
+# - Wait for import flows to complete if using config flows + YAML
+# - Set up all associated config entries (via `async_setup_locked`)
+# - Register the integration as loaded and fire `EVENT_COMPONENT_LOADED`
+# - Clean up setup tracking state for the domain
+
+
+# Returns:
+#     True if the integration was successfully set up; False otherwise.
 async def _async_setup_component(
     hass: core.HomeAssistant, domain: str, config: ConfigType
 ) -> bool:
@@ -354,14 +374,17 @@ async def _async_setup_component(
     # Some integrations fail on import because they call functions incorrectly.
     # So we do it before validating config to catch these errors.
     try:
+        # USERNOTE: Load the integration, and cast it to component protocol.
         component = await integration.async_get_component()
     except ImportError as err:
         log_error(f"Unable to import component: {err}", err)
         return False
 
+    # USERNOTE: Validate and normalize the YAML configuration for a specific integration.
     integration_config_info = await conf_util.async_process_component_config(
         hass, config, integration, component
     )
+    # USERNOTE: Handle the integration's config errors.
     conf_util.async_handle_component_errors(hass, integration_config_info, integration)
     processed_config = conf_util.async_drop_config_annotations(
         integration_config_info, integration
@@ -376,7 +399,7 @@ async def _async_setup_component(
         log_error("Invalid config.")
         return False
 
-    # Detect attempt to setup integration which can be setup only from config entry
+    # USERNOTE: Detect attempt to setup integration which can be setup only from config entry
     if (
         domain in processed_config
         and not hasattr(component, "async_setup")
@@ -423,15 +446,17 @@ async def _async_setup_component(
         task: Awaitable[bool] | None = None
         result: Any | bool = True
         try:
-            # USERNOTE: Execute component's async_setup() or setup() method.
+            # USERNOTE: If the component has an non-blocking async_setup() method, run it.
             if hasattr(component, "async_setup"):
                 task = component.async_setup(hass, processed_config)
+            # USERNOTE: Run the component's sync setup() method in an executor as it is expected to be a blocking call.
             elif hasattr(component, "setup"):
                 # This should not be replaced with hass.async_add_executor_job because
                 # we don't want to track this task in case it blocks startup.
                 task = hass.loop.run_in_executor(
                     None, component.setup, hass, processed_config
                 )
+            # USERNOTE: Component MUST have an async_setup_entry() as it must support config entry set up.
             elif not hasattr(component, "async_setup_entry"):
                 log_error("No setup or config entry setup function defined.")
                 return False
@@ -470,6 +495,11 @@ async def _async_setup_component(
         if load_translations_task:
             await load_translations_task
 
+    # USERNOTE: If integration support config flow
+    # The system must wait for any import-based config flows to complete initialization
+    # This guarantees that config entries resulting from YAML are fully created before moving on with full component setup
+    # IMPORT FLOW:
+    # A config flow triggered by YAML config, used to create a config entry for migrating to the UI driven config flow.
     if integration.platforms_exists(("config_flow",)):
         # If the integration has a config_flow, wait for import flows.
         # As these are all created with eager tasks, we do not sleep here,
@@ -481,7 +511,7 @@ async def _async_setup_component(
     hass.config.components.add(domain)
 
     # USERNOTE: Retrieve all config entries for the target domain.
-    # If there are any config entries, we set them up.
+    # If there are any config entries, then set them up.
     if entries := hass.config_entries.async_entries(
         domain, include_ignore=False, include_disabled=False
     ):
@@ -501,8 +531,10 @@ async def _async_setup_component(
         )
 
     # Cleanup
+    # USERNOTE: Remove the domain from the in memory tracking structure that tracks the domains that are being setup.
     hass.data[_DATA_SETUP].pop(domain, None)
 
+    # USERNOTE: Fire an event that the component has been loaded.
     hass.bus.async_fire_internal(
         EVENT_COMPONENT_LOADED, EventComponentLoaded(component=domain)
     )

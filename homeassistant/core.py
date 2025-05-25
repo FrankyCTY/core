@@ -2450,16 +2450,20 @@ class StateMachine:
 class SupportsResponse(enum.StrEnum):
     """Service call response configuration."""
 
+    # USERNOTE: Just performs an action (like turning on a light)
     NONE = "none"
     """The service does not support responses (the default)."""
 
+    # USERNOTE: Optionally returns data (like fetching the current temperature)
     OPTIONAL = "optional"
     """The service optionally returns response data when asked by the caller."""
 
+    # USERNOTE: Must return data (like asking ChatGPT for a reply)
     ONLY = "only"
     """The service is read-only and the caller must always ask for response data."""
 
 
+# USERNOTE: A service represents a callable action or command that users or automations can invoke on the Home Assistant system.
 class Service:
     """Representation of a callable service."""
 
@@ -2474,6 +2478,7 @@ class Service:
             | EntityServiceResponse
             | None,
         ],
+        # USERNOTE: For validating input parameters
         schema: VolSchemaType | None,
         domain: str,
         service: str,
@@ -2487,6 +2492,7 @@ class Service:
         self.supports_response = supports_response
 
 
+# USERNOTE: Service call is a runtime object that represents a specific request to invoke a service.
 class ServiceCall:
     """Representation of a call to a service."""
 
@@ -2498,6 +2504,8 @@ class ServiceCall:
         domain: str,
         service: str,
         data: dict[str, Any] | None = None,
+        # USERNOTE: Context object for correlation mechanism.
+        # https://data.home-assistant.io/docs/context
         context: Context | None = None,
         return_response: bool = False,
     ) -> None:
@@ -2505,6 +2513,7 @@ class ServiceCall:
         self.hass = hass
         self.domain = domain
         self.service = service
+        # USERNOTE: Payload of the service call request.
         self.data = ReadOnlyDict(data or {})
         self.context = context or Context()
         self.return_response = return_response

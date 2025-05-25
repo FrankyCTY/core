@@ -377,7 +377,13 @@ class ConfigEntry[_DataT = Any]:
     domain: str
     title: str
     data: MappingProxyType[str, Any]
+    # USERNOTE: Store per-config-entry runtime state.
+    # For integration to store config entry specific runtime data in memory.
     runtime_data: _DataT
+    # USERNOTE: Configured via Options Flow
+    # USERNOTE: An Options Flow is a user interface-driven setup wizard (flow) that allows editing runtime configuration options of an integration after it has been installed.
+    # https://developers.home-assistant.io/docs/config_entries_options_flow_handler
+    # USERNOTE: See async_get_options_flow() in config_flow.py
     options: MappingProxyType[str, Any]
     subentries: MappingProxyType[str, ConfigSubentry]
     unique_id: str | None
@@ -648,6 +654,11 @@ class ConfigEntry[_DataT = Any]:
         return json_fragment(json_bytes_sorted(self.as_dict()))
 
     # USERNOTE: Set up a config entry.
+    # USERNOTE: CONDITION: If it is NOT a platform-forwarded entry, then:
+    # - Update the config entry runtime state to track the set up progress.
+    # - Load the config flow platform.
+    # - Migrate the config entry if necessary.
+    # - Invoke integration's async_setup_entry() which is defined in the integration's __init__.py file.
     async def async_setup(
         self,
         hass: HomeAssistant,

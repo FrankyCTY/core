@@ -6,6 +6,7 @@ import base64
 from mimetypes import guess_file_type
 from pathlib import Path
 
+from networkx import complement
 import openai
 from openai.types.images_response import ImagesResponse
 from openai.types.responses import (
@@ -56,9 +57,9 @@ from .const import (
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_GENERATE_CONTENT = "generate_content"
 
-# LLM: Platform constants define which HA platforms this integration provides
-# The conversation platform enables this integration to act as a conversation agent
+# USERNOTE: Define the platform dependencies for this integration. The platform is expected to have a corresponding {platform domain}.py file in this integration directory.
 PLATFORMS = (Platform.CONVERSATION,)
+# USERNOTE: This integration does not support setup from YAML, so we set up config schema to log any attempts to configure from YAML.
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # LLM: Type alias for config entries that store OpenAI client in runtime_data
@@ -80,17 +81,25 @@ def encode_file(file_path: str) -> tuple[str, str]:
         return (mime_type, base64.b64encode(image_file.read()).decode("utf-8"))
 
 
-# LLM: Integration setup function for YAML-based configuration (legacy support)
-# Purpose: Registers domain-level services and sets up integration-wide functionality
-# Caveats: Called only for YAML setup, modern integrations use config entries
-# Role in Scope: Provides programmatic access to OpenAI capabilities outside conversation flow
+# LLM: Function for asynchronous setup of the integration.
+# USERNOTE: Invoked in setup.py's _async_setup_component() function.
+# Integration ROLE:
+# - Provides programmatic (non-conversational) API access for generating content and images using OpenAI's APIs, independent of the conversation agent.
+# - Provides direct access to DALL-E capabilities outside conversation flow.
+# Features:
+# - Registers `generate_content` service (ChatGPT-like interaction with optional files)
+# - Registers `generate_image` service (DALL·E 3 image generation)
+# - Enforces valid config entry for authentication and runtime context
+# - Performs file validation, multimodal support, and safe executor-based I/O
+# Caveats:
+# - Requires an existing config entry (configured via UI)
+# - Does NOT rely on YAML setup (even though it uses `async_setup`)
+# - Complements `async_setup_entry` and is used in tandem with config entry lifecycle
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up OpenAI Conversation."""
 
     # LLM: Service handler for DALL-E image generation
     # Purpose: Allows users to generate images via Home Assistant services
-    # Caveats: Requires valid config entry, validates file access permissions
-    # Role in Scope: Provides direct API access separate from conversation interface
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with dall-e."""
         # LLM: Extract and validate the config entry reference from service call
@@ -132,16 +141,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return response.data[0].model_dump(exclude={"b64_json"})
 
     # LLM: Service handler for ChatGPT content generation
-    # Purpose: Provides direct access to GPT models with file attachment support
-    # Caveats: Handles multi-modal inputs, validates file permissions and types
-    # Role in Scope: Complements conversation interface with programmatic API access
+    # Provides direct access to GPT models with file attachment support
+    # Handles multi-modal inputs, validates file permissions and types
     async def send_prompt(call: ServiceCall) -> ServiceResponse:
         """Send a prompt to ChatGPT and return the response."""
-        # LLM: Extract and validate config entry for this service call
+        # USERNOTE: The user is expected to select a config entry from the UI
+        # Or provide a config entry ID (e.g., "c7bcd133ef104fa4b0b61e51aaad01e9") when calling the service via YAML, REST API, or automation.
         entry_id = call.data["config_entry"]
         entry = hass.config_entries.async_get_entry(entry_id)
 
-        # LLM: Ensure valid config entry to prevent unauthorized API access
+        # USERNOTE: Return service validation error if the config entry is invalid.
         if entry is None or entry.domain != DOMAIN:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
@@ -149,12 +158,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
-        # LLM: Get model configuration from entry options with fallback to defaults
+        # USERNOTE: Get model configuration from entry options with fallback to defaults
+        # USERNOTE: If the user did not update corresponding option in option flow, then the default model is used.
         model: str = entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         client: openai.AsyncClient = entry.runtime_data
 
-        # LLM: Initialize message content with user's text prompt
-        # OpenAI's new response format requires structured input parameters
+        # USERNOTE: Extract user prompt from the service call request payload.
         content: ResponseInputMessageContentListParam = [
             ResponseInputTextParam(type="input_text", text=call.data[CONF_PROMPT])
         ]
@@ -203,12 +212,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                         f"`{filename}` is not an image file or PDF"
                     )
 
-        # LLM: Process file attachments in executor to avoid blocking the event loop
+        # USERNOTE: Process file attachments in executor to avoid blocking the event loop
         # File I/O operations can be slow and should not block async operations
         if CONF_FILENAMES in call.data:
             await hass.async_add_executor_job(append_files_to_content)
 
-        # LLM: Structure the complete message for OpenAI's response format
+        # USERNOTE: Form a user message for openAI
         messages: ResponseInputParam = [
             EasyInputMessageParam(type="message", role="user", content=content)
         ]
@@ -249,12 +258,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
         return {"text": response.output_text}
 
-    # LLM: Register the content generation service with Home Assistant
+    # USERNOTE: Register the content generation service with Home Assistant
     # Enables programmatic access to GPT models with multi-modal support
+    # Service name: openai_conversation.generate_content
+    # USERNOTE: Example YAML config:
+    # service: openai_conversation.generate_content
+    # data:
+    #   config_entry: <entry_id>
+    #   prompt: "Explain how a rocket engine works."
+    #   filenames:
+    #     - /config/docs/rocket_specs.pdf
     hass.services.async_register(
         DOMAIN,
         SERVICE_GENERATE_CONTENT,
+        # USERNOTE: Handler function
         send_prompt,
+        # USERNOTE: Schema to validate the service call data.
         schema=vol.Schema(
             {
                 vol.Required("config_entry"): selector.ConfigEntrySelector(
@@ -263,6 +282,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     }
                 ),
                 vol.Required(CONF_PROMPT): cv.string,
+                # USERNOTE: Filenames list is normalized using cv.ensure_list.
                 vol.Optional(CONF_FILENAMES, default=[]): vol.All(
                     cv.ensure_list, [cv.string]
                 ),
@@ -271,8 +291,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
 
-    # LLM: Register the image generation service with Home Assistant
+    # USERNOTE: Register the image generation service with Home Assistant
     # Provides direct access to DALL-E capabilities outside conversation flow
+    # USERNOTE: Example YAML config:
+    # service: openai_conversation.generate_image
+    # data:
+    #   config_entry: <entry_id>
+    #   prompt: "A futuristic city at sunset"
+    #   size: "1024x1792"
+    #   quality: "hd"
+    #   style: "vivid"
     hass.services.async_register(
         DOMAIN,
         SERVICE_GENERATE_IMAGE,
