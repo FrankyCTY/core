@@ -891,7 +891,10 @@ class HomeAssistant:
         """Add an executor job from within the event loop."""
         task = self.loop.run_in_executor(None, target, *args)
 
+        # USERNOTE: Check if the coroutine that invokes this callback is tracked within _tasks as part of the hass tracking system.
+        # Example: Ancestor called called via `async_run_job` will be tracked e.g.
         tracked = asyncio.current_task() in self._tasks
+        # USERNOTE: If the caller coroutine is tracked, then add this to _tasks (tracked foreground tasks bucket)
         task_bucket = self._tasks if tracked else self._background_tasks
         task_bucket.add(task)
         task.add_done_callback(task_bucket.remove)

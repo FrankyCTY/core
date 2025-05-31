@@ -69,12 +69,16 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# LLM: Schema for initial user setup requiring only the OpenAI API key
+# This minimal schema keeps the initial setup simple while allowing advanced configuration later
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
     }
 )
 
+# LLM: Default configuration options applied when a new integration entry is created
+# These recommended settings provide sensible defaults for most users while enabling core features
 RECOMMENDED_OPTIONS = {
     CONF_RECOMMENDED: True,
     CONF_LLM_HASS_API: llm.LLM_API_ASSIST,
@@ -82,15 +86,21 @@ RECOMMENDED_OPTIONS = {
 }
 
 
+# LLM: Validates OpenAI API credentials by attempting to connect and list available models
+# Purpose: Ensures the provided API key can authenticate with OpenAI before saving the configuration
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
+    # LLM: Create OpenAI client with user's API key using Home Assistant's HTTP client for proxy support
     client = openai.AsyncOpenAI(
         api_key=data[CONF_API_KEY], http_client=get_async_client(hass)
     )
-    await hass.async_add_executor_job(client.with_options(timeout=10.0).models.list)
+    # LLM: Test API connectivity by listing models with a 10-second timeout
+    # This is a lightweight operation that validates both authentication and network connectivity
+    # FIXME: There seems to bug where the openai_sdk models.list is not throwing error on invalid API key.
+    return await hass.async_add_executor_job(client.with_options(timeout=10.0).models.list)
 
 
 class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -98,10 +108,15 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    # LLM: Handles the initial setup step where users provide their OpenAI API key
+    # This collects and validates API credentials, creates integration entry on success
+    # It returns form on first visit, validates and creates entry on submission
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step."""
+        # LLM: On first visit, display the API key input form to the user
+        # USERNOTE: This gather user input to create the config entry.
         if user_input is None:
             return self.async_show_form(
                 step_id="user", data_schema=STEP_USER_DATA_SCHEMA
@@ -119,12 +134,15 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
+            # LLM: Validation successful - create the integration entry with recommended default options
+            # This completes the initial setup and makes the integration available for use
             return self.async_create_entry(
                 title="ChatGPT",
                 data=user_input,
                 options=RECOMMENDED_OPTIONS,
             )
 
+        # USERNOTE: If there is exception, this shows form again with error messages for user to retry with correct API key
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
@@ -140,15 +158,27 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
         return OpenAIOptionsFlow(config_entry)
 
 
+# USERNOTE: This configure the option flow, and allow the config entry's options to be edited.
+# USERNOTE: An Options Flow is a user interface-driven setup wizard (flow) that allows editing runtime configuration options of an integration after it has been installed.
+# https://developers.home-assistant.io/docs/config_entries_options_flow_handler
 class OpenAIOptionsFlow(OptionsFlow):
     """OpenAI config flow options handler."""
 
+    # LLM: Initializes options flow with state tracking for dynamic UI rendering
+    # Purpose: Sets up flow state and remembers current recommended mode setting
+    # Role in Scope: Constructor that prepares the flow for handling user configuration changes
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
+        # LLM: Track the recommended setting to detect UI mode changes
+        # This enables toggling between simple and advanced configuration interfaces
         self.last_rendered_recommended = config_entry.options.get(
             CONF_RECOMMENDED, False
         )
 
+    # LLM: Main options flow step that handles both simple and advanced configuration modes
+    # Purpose: Presents appropriate UI based on recommended mode and validates configuration changes
+    # Role in Scope: Central options management with validation for model compatibility and feature support
+    # Caveats: Re-renders form when switching modes, validates web search model support, handles location data
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -157,27 +187,45 @@ class OpenAIOptionsFlow(OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # USERNOTE: Check if user changed the recommended mode toggle
+            # - If no change: Validate option form and display error if violated, then create entry with latest entry options.
+            # - If recommend option has changed since last render:  Option "recommend" defaults to true, but if user confiures it to false in the option flow, we want to re-render option form with more advanced data schema.
             if user_input[CONF_RECOMMENDED] == self.last_rendered_recommended:
+                # LLM: Same mode - validate the configuration and save if valid
+                
+                # USERNOTE: Remove LLM_HASS_API if not provided to avoid storing empty values
                 if not user_input.get(CONF_LLM_HASS_API):
                     user_input.pop(CONF_LLM_HASS_API, None)
+                
+                # USERNOTE: Validate that selected model is supported by the integration
                 if user_input.get(CONF_CHAT_MODEL) in UNSUPPORTED_MODELS:
                     errors[CONF_CHAT_MODEL] = "model_not_supported"
 
+                # USERNOTE: Validate web search configuration compatibility
                 if user_input.get(CONF_WEB_SEARCH):
+                    # USERNOTE: Check if selected model supports web search functionality
                     if (
                         user_input.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
                         not in WEB_SEARCH_MODELS
                     ):
                         errors[CONF_WEB_SEARCH] = "web_search_not_supported"
+                    # USERNOTE: If user location is enabled, fetch location data for better search results
                     elif user_input.get(CONF_WEB_SEARCH_USER_LOCATION):
+                        # USERNOTE: Use OpenAI to determine approximate location from Home Assistant coordinates
                         user_input.update(await self.get_location_data())
 
+                # USERNOTE: Save entry options configuration if no validation errors occurred
                 if not errors:
+                    # USERNOTE: Upsert config entry
                     return self.async_create_entry(title="", data=user_input)
             else:
-                # Re-render the options again, now with the recommended options shown/hidden
+                # USERNOTE: Get user toggled recommended mode to prepare to re-render with new mode settings.
+                # - Re-rendering allows showing/hiding advanced options based on user preference.
                 self.last_rendered_recommended = user_input[CONF_RECOMMENDED]
 
+                # USERNOTE: Ensure core settings have sensible defaults, and not broken due to expected user request options.
+                # - This default options will then be used to configure the data schema for the option form, and the new form will
+                # be re-rendered on the client side with the new data schema.
                 options = {
                     CONF_RECOMMENDED: user_input[CONF_RECOMMENDED],
                     CONF_PROMPT: user_input.get(
@@ -186,6 +234,8 @@ class OpenAIOptionsFlow(OptionsFlow):
                     CONF_LLM_HASS_API: user_input.get(CONF_LLM_HASS_API),
                 }
 
+        # USERNOTE: Prepare configure form's data schema, and configure UI selectors such as use of template, select, bool.
+        # - Based on the config entry's option "CONF_RECOMMENDED", prepare simplified/advanced configure schema.
         schema = openai_config_option_schema(self.hass, options)
         return self.async_show_form(
             step_id="init",
@@ -193,15 +243,25 @@ class OpenAIOptionsFlow(OptionsFlow):
             errors=errors,
         )
 
+    # USERNOTE: Determines user's approximate location for enhanced web search results
+    # - Uses OpenAI to convert Home Assistant coordinates into city/region names for search context
+    # - Enhances web search accuracy by providing location-aware search results
     async def get_location_data(self) -> dict[str, str]:
         """Get approximate location data of the user."""
         location_data: dict[str, str] = {}
+        
+        # USERNOTE: Get user home location.
+        # - "zone.home" is a built-in Zone entity representing user home location
         zone_home = self.hass.states.get(ENTITY_ID_HOME)
         if zone_home is not None:
+            # USERNOTE: Create OpenAI client to perform coordinate-to-location conversion Get user home location.
             client = openai.AsyncOpenAI(
                 api_key=self.config_entry.data[CONF_API_KEY],
                 http_client=get_async_client(self.hass),
             )
+            
+            # USERNOTE: Define schema for structured location output from OpenAI
+            # This ensures we get consistent city and region information
             location_schema = vol.Schema(
                 {
                     vol.Optional(
@@ -214,6 +274,9 @@ class OpenAIOptionsFlow(OptionsFlow):
                     ): str,
                 }
             )
+            
+            # USERNOTE: Query OpenAI to convert coordinates to human-readable location
+            # This provides context for web searches without exposing exact coordinates
             response = await client.responses.create(
                 model=RECOMMENDED_CHAT_MODEL,
                 input=[
@@ -236,8 +299,12 @@ class OpenAIOptionsFlow(OptionsFlow):
                 },
                 store=False,
             )
+            
+            # USERNOTE: Parse and validate the OpenAI response using our schema
             location_data = location_schema(json.loads(response.output_text) or {})
 
+        # USERNOTE: Add additional location context from Home Assistant configuration
+        # - Country & timezone
         if self.hass.config.country:
             location_data[CONF_WEB_SEARCH_COUNTRY] = self.hass.config.country
         location_data[CONF_WEB_SEARCH_TIMEZONE] = self.hass.config.time_zone
@@ -247,11 +314,15 @@ class OpenAIOptionsFlow(OptionsFlow):
         return location_data
 
 
+# USERNOTE: Prepare configure form's data schema, and configure UI selectors such as use of template, select, bool.
+# - Based on the config entry's option "CONF_RECOMMENDED", prepare simplified/advanced configure schema.
 def openai_config_option_schema(
     hass: HomeAssistant,
     options: Mapping[str, Any],
 ) -> VolDictType:
     """Return a schema for OpenAI completion options."""
+    # USERNOTE: Build list of available Home Assistant LLM APIs for user selection
+    # - Currently only support "Assist API"
     hass_apis: list[SelectOptionDict] = [
         SelectOptionDict(
             label=api.name,
@@ -259,10 +330,15 @@ def openai_config_option_schema(
         )
         for api in llm.async_get_apis(hass)
     ]
+    
+    # USERNOTE: Ensure the suggested LLM apis is in LIST
+    # Example: "assist" -> ["assist"]
     if (suggested_llm_apis := options.get(CONF_LLM_HASS_API)) and isinstance(
         suggested_llm_apis, str
     ):
         suggested_llm_apis = [suggested_llm_apis]
+    
+    # USERNOTE: Prepare data schema for the configure option flow
     schema: VolDictType = {
         vol.Optional(
             CONF_PROMPT,
@@ -281,9 +357,14 @@ def openai_config_option_schema(
         ): bool,
     }
 
+    # USERNOTE: Return simplified schema if user prefers recommended settings
+    # - Based on CONF_RECOMMENDED flag, default to TRUE.
+    # USERNOTE: Can be configured in config entry via YAML config to update "recommend" to false.
     if options.get(CONF_RECOMMENDED):
         return schema
 
+    # USERNOTE: Add advanced configuration options for power users that do not want to use recommended schema.
+    # - These settings provide fine-grained control over OpenAI model behavior
     schema.update(
         {
             vol.Optional(

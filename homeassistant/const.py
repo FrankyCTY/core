@@ -34,6 +34,7 @@ REQUIRED_NEXT_PYTHON_VER: Final[tuple[int, int, int]] = (3, 13, 2)
 REQUIRED_NEXT_PYTHON_HA_RELEASE: Final = ""
 
 # Format for platform files
+# USERNOTE: The platform is the entity component, and the domain is the root integration's domain.
 PLATFORM_FORMAT: Final = "{platform}.{domain}"
 
 

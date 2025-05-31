@@ -321,8 +321,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
+# USERNOTE: Likely invoke in platform forwarding flow (e.g. see openai_conversation/__init__.py async_setup_entry)
+# - entry: The config entry being forwarded from the root integration (e.g. openai_conversation)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a config entry."""
+    # USERNOTE: Load from "conversation" in memory cache, which stores the entity component.
+    # This will eventually process to set up the platform entities for this integration (e.g. conversation).
     return await hass.data[DATA_COMPONENT].async_setup_entry(entry)
 
 

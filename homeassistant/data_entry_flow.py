@@ -696,6 +696,7 @@ class FlowHandler(Generic[_FlowContextT, _FlowResultT, _HandlerT]):
             schema[new_key] = val
         return vol.Schema(schema)
 
+    # USERNOTE: Create the flow result for UI.
     @callback
     def async_show_form(
         self,

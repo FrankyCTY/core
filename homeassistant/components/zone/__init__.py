@@ -58,6 +58,7 @@ DEFAULT_PASSIVE = False
 DEFAULT_RADIUS = 100
 
 ENTITY_ID_FORMAT = "zone.{}"
+# USERNOTE: "zone.home" is a built-in Zone entity representing user home location
 ENTITY_ID_HOME = ENTITY_ID_FORMAT.format(HOME_ZONE)
 
 ICON_HOME = "mdi:home"

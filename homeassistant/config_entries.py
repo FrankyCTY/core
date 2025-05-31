@@ -408,8 +408,10 @@ class ConfigEntry[_DataT = Any]:
     _on_state_change: list[CALLBACK_TYPE] | None
     setup_lock: asyncio.Lock
     _reauth_lock: asyncio.Lock
+    # USERNOTE: The tasks to track the config entry related task such as task that adding entities into the entity registry.
     _tasks: set[asyncio.Future[Any]]
     _background_tasks: set[asyncio.Future[Any]]
+    # USERNOTE: The integration instance of the domain of the config entry. (e.g. openai_conversation integration)
     _integration_for_domain: loader.Integration | None
     _tries: int
     created_at: datetime
@@ -1332,6 +1334,7 @@ class ConfigEntry[_DataT = Any]:
             if flow["context"].get("source") in sources
         )
 
+    # USERNOTE: API for creating task and integrate into HASS tracking system.
     @callback
     def async_create_task[_R](
         self,
@@ -2618,11 +2621,8 @@ class ConfigEntries:
             self.hass, SIGNAL_CONFIG_ENTRY_CHANGED, change_type, entry
         )
 
-    # LLM: Platform setup coordinator for config entries
-    # Purpose: Efficiently sets up multiple platforms (sensor, switch, etc.) for a config entry in parallel
-    # Caveats: Must be called with entry in LOADED state, requires setup lock to prevent race conditions
-    # Side Effects: Modifies global platform state, can trigger entity registration and device discovery
-    # Role in Scope: Critical integration lifecycle method that bridges config entries to platform entities
+    # USERNOTE: - Load platform modules into DATA_COMPONENTS (components) in memory cache
+    # USERNOTE: - Ensure the platform's root integrations (e.g. conversation) are loaded into DATA_INTEGRATIONS cache.
     async def async_forward_entry_setups(
         self, entry: ConfigEntry, platforms: Iterable[Platform | str]
     ) -> None:
@@ -2637,7 +2637,7 @@ class ConfigEntries:
         it can load multiple platforms at once and does not require a separate
         import executor job for each platform.
         """
-        # USERNOTE: Load/Retrieve integration by entry domain.
+        # USERNOTE: Load/Retrieve integration by entry domain. (e.g. opena_conversation integration)
         integration = await loader.async_get_integration(self.hass, entry.domain)
 
         # LLM: Ensure platform modules are imported before proceeding with setup
@@ -2730,16 +2730,22 @@ class ConfigEntries:
             # so we do not end up waiting for when the EntityComponent calls
             # async_prepare_setup_platform
             # USERNOTE: Ensure the main integration that originally created the ConfigEntry is set up (preloaded).
+            # Example: openai_conversation integration
             integration = await loader.async_get_integration(self.hass, entry.domain)
-            # USERNOTE: Then ensure the platforms of the main integration is loaded.
+            # USERNOTE: Then ensure the platforms of the main integration is loaded as modules into memory.
             if not integration.platforms_are_loaded((domain,)):
                 with async_pause_setup(self.hass, SetupPhases.WAIT_IMPORT_PLATFORMS):
+                    # USERNOTE: Load platforms for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
+                    # Example: Load platforms of openai_conversation such as conversation.py of the openai_conversation integration.
                     await integration.async_get_platform(domain)
 
         # USERNOTE: Retrieve the "platform integration" from cache that we expect to be already loaded at this point.
+        # USERNOTE: Load from DATA_INTEGRATIONS cache
         integration = loader.async_get_loaded_integration(self.hass, domain)
         # USERNOTE: This perform the so called "forward" process.
         # Essentally just use the main integration's config entry to set up the platform's domain integration.
+        # - Entry: Still the main integration's config entry.
+        # - Integration: From this point will be the platform's domain integration.
         await entry.async_setup(self.hass, integration=integration)
         return True
 

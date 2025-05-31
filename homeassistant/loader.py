@@ -1101,6 +1101,7 @@ class Integration:
         # USERNOTE: Return the imported integration module. (NOT the platform module in the integration directory but the integration module itself)
         return cache[domain]
 
+    # USERNOTE: Load platforms of an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
     def _load_platforms(self, platform_names: Iterable[str]) -> dict[str, ModuleType]:
         """Load platforms for an integration."""
         return {
@@ -1110,6 +1111,7 @@ class Integration:
         }
 
     # USERNOTE: Load target module from the integration directory
+    # USERNOTE: Load the platform for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
     # - load `homeassistant.components.<domain>.<platform_name>`
     async def async_get_platform(self, platform_name: str) -> ModuleType:
         """Return a platform for an integration."""
@@ -1122,6 +1124,7 @@ class Integration:
 
 
     # USERNOTE: Load all the platforms for "this" integration.
+    # USERNOTE: Involved loading platforms for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
     async def async_get_platforms(
         self, platform_names: Iterable[Platform | str]
     ) -> dict[str, ModuleType]:
@@ -1196,6 +1199,7 @@ class Integration:
 
                 # USERNOTE: This execute the load_platforms in the event loop.
                 if load_event_loop_platforms:
+                    # USERNOTE: Load platforms for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
                     platforms.update(self._load_platforms(platform_names))
 
                 for platform_name, import_future in import_futures:
@@ -1292,7 +1296,7 @@ class Integration:
 
         return existing_platforms
 
-    # USERNOTE: Load the platform for an integration from the target integration's directory into Hass in memory data cache.
+    # USERNOTE: Load the platform for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
     # Example: openai_conversation.conversation
     def _load_platform(self, platform_name: str) -> ModuleType:
         """Load a platform for an integration.

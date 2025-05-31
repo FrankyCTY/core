@@ -6,7 +6,6 @@ import base64
 from mimetypes import guess_file_type
 from pathlib import Path
 
-from networkx import complement
 import openai
 from openai.types.images_response import ImagesResponse
 from openai.types.responses import (
@@ -98,11 +97,11 @@ def encode_file(file_path: str) -> tuple[str, str]:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up OpenAI Conversation."""
 
-    # LLM: Service handler for DALL-E image generation
-    # Purpose: Allows users to generate images via Home Assistant services
+    # USERNOTE: Service handler for DALL-E image generation
+    # - Allows users to generate images via Home Assistant services
     async def render_image(call: ServiceCall) -> ServiceResponse:
         """Render an image with dall-e."""
-        # LLM: Extract and validate the config entry reference from service call
+        # USERNOTE: Extract the config entry ID from the request data.
         entry_id = call.data["config_entry"]
         entry = hass.config_entries.async_get_entry(entry_id)
 
@@ -138,6 +137,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         if not response.data or not response.data[0].url:
             raise HomeAssistantError("No image returned")
 
+        # USERNOTE: Exclude the Base64-encoded representation of the image binary
+        # Because we have configured to have openai return the url only anyway.
         return response.data[0].model_dump(exclude={"b64_json"})
 
     # LLM: Service handler for ChatGPT content generation
@@ -364,8 +365,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenAIConfigEntry) -> bo
     # - Ensures service handlers and platforms can access the same initialized resources.
     entry.runtime_data = client
 
-    # LLM: Set up the conversation platform which provides the AI agent functionality
-    # This creates the conversation entity that integrates with HA's conversation system
+    # USERNOTE: - Load platform modules into DATA_COMPONENTS (components) in memory cache
+    # USERNOTE: - Ensure the platform's root integrations (e.g. conversation) are loaded into DATA_INTEGRATIONS cache.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True

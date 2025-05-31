@@ -70,6 +70,9 @@ from .const import (
 MAX_TOOL_ITERATIONS = 10
 
 
+# USERNOTE: Entry will be the corresponding integration's config entry forwarded to the platform.
+# Goal: Set up the platform's entities
+# USERNOTE: This will be invoked in platform forwarding flow, see at the end of EntityComponent.async_setup_entry(), which set up the platform via platform entity for the platform.
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: OpenAIConfigEntry,
@@ -77,6 +80,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up conversation entities."""
     agent = OpenAIConversationEntity(config_entry)
+    # USERNOTE: Add the entities for the platform.
     async_add_entities([agent])
 
 
@@ -237,6 +241,8 @@ class OpenAIConversationEntity(
         """Initialize the agent."""
         self.entry = entry
         self._attr_unique_id = entry.entry_id
+        # USERNOTE: Register this as device, which determine specific static behaviors e.g
+        # Example: UI shows location modal as part of config flow after config entry is created.
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=entry.title,

@@ -553,6 +553,8 @@ async def _async_setup_component(
     return True
 
 
+# USERNOTE: Invoked in platform forwarding flow to prepare the platform module.
+# Example: openai_conversation.conversation module
 async def async_prepare_setup_platform(
     hass: core.HomeAssistant, hass_config: ConfigType, domain: str, platform_name: str
 ) -> ModuleType | None:
@@ -560,6 +562,10 @@ async def async_prepare_setup_platform(
 
     This method is a coroutine.
     """
+    # USERNOTE: Resolve to the platform's module path. (e.g. openai_conversation.conversation)
+    # "{platform}.{domain}"
+    # - platform_name = openai_conversation
+    # - domain = conversation
     platform_path = PLATFORM_FORMAT.format(domain=domain, platform=platform_name)
 
     def log_error(msg: str) -> None:
@@ -571,6 +577,7 @@ async def async_prepare_setup_platform(
         async_notify_setup_error(hass, platform_path)
 
     try:
+        # USERNOTE: Get integration instance respresnts the platform name domain (e.g. openai_conversation)
         integration = await loader.async_get_integration(hass, platform_name)
     except loader.IntegrationNotFound:
         log_error("Integration not found")
@@ -606,12 +613,15 @@ async def async_prepare_setup_platform(
         return None
 
     try:
+        # USERNOTE: Load platform module of the domain under the platform name (e.g. openai_conversation).
+        # Example: openai_conversation.conversation module
         platform = await integration.async_get_platform(domain)
     except ImportError as exc:
         log_error(f"Platform not found ({exc}).")
         return None
 
     # Already loaded
+    # USERNOTE: Check if the platform module is already loaded into memory, if yes then return the platform module.
     if platform_path in hass.config.components:
         return platform
 

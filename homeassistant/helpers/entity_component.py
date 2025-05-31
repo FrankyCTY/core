@@ -126,6 +126,8 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
         self.config: ConfigType | None = None
 
         domain_platform = self._async_init_entity_platform(domain, None)
+        # USERNOTE: Entity component cache of entity platform for an entry.
+        # Example { [entry id]: entity platform }
         self._platforms: dict[
             str | tuple[str, timedelta | None, str | None], EntityPlatform
         ] = {domain: domain_platform}
@@ -200,9 +202,18 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
         """Handle the loading of a platform."""
         await self.async_setup_platform(platform, {}, info)
 
+    # USERNOTE: Likely invoke in platform forwarding flow:
+    # 1. From the root integration (e.g. openai_conversation)'s __init__.py async_setup_entry()
+    # 2. From the integration of corresponding platform (e.g. conversation)'s __init__.py async_setup_entry(). Which loads up the entity component and invoke this async_setup_entry().
+    # USERNOTE: Config entry is the root integration's config entry. (e.g. openai_conversation)
     async def async_setup_entry(self, config_entry: ConfigEntry) -> bool:
         """Set up a config entry."""
+        # USERNOTE: The platform type likely the root integration's domain such as openai_conversation.
         platform_type = config_entry.domain
+        # USERNOTE: Load the platform module of the entry's domain
+        # Example: openai_conversation.conversation module
+        # - domain: The platform domain (e.g. conversation)
+        # - platform type (from entry's domain): The root integration's domain (e.g. openai_conversation)
         platform = await async_prepare_setup_platform(
             self.hass,
             # In future PR we should make hass_config part of the constructor
@@ -223,12 +234,18 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
                 f"{platform_type}.{self.domain} has already been setup!"
             )
 
+        # USERNOTE: Init the entity platform for the root integration and store into DATA_ENTITY_PLATFORM cache.
         self._platforms[key] = self._async_init_entity_platform(
+            # USERNOTE: The root integration's domain (e.g. openai_conversation)
             platform_type,
+            # USERNOTE: The platform module of the entry's domain
             platform,
             scan_interval=getattr(platform, "SCAN_INTERVAL", None),
         )
 
+        # USERNOTE: Invoke entity platform's async_setup_entry() to setup the platform.
+        # - Load translations for the platform.
+        # - Execute async_create_setup_awaitable callback, likely invoking async_setup_entry() from the platform module.
         return await self._platforms[key].async_setup_entry(config_entry)
 
     async def async_unload_entry(self, config_entry: ConfigEntry) -> bool:
@@ -323,6 +340,8 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
         if self.config is None:
             raise RuntimeError("async_setup needs to be called first")
 
+        # USERNOTE: Load & setup the platform module of the entry's domain
+        # Example: openai_conversation.conversation module
         platform = await async_prepare_setup_platform(
             self.hass, self.config, self.domain, platform_type
         )
@@ -403,6 +422,7 @@ class EntityComponent[_EntityT: entity.Entity = entity.Entity]:
 
         return processed_conf
 
+    # USERNOTE: Initialize the entity platform for the root integration and store into DATA_ENTITY_PLATFORM cache.
     @callback
     def _async_init_entity_platform(
         self,
