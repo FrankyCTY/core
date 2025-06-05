@@ -44,7 +44,7 @@ def setup_cors(app: Application, origins: list[str]) -> None:
         app,
         # USERNOTE: DEFAULT CORS policies for all hosts.
         defaults={
-            host: aiohttp_cors.ResourceOptions(
+            host: aiohttp_cors.ResourceOptions(  # type: ignore[no-untyped-call]
                 allow_headers=ALLOWED_CORS_HEADERS, allow_methods="*"
             )
             for host in origins
@@ -52,7 +52,7 @@ def setup_cors(app: Application, origins: list[str]) -> None:
     )
 
     # USERNOTE: Track added cors routes to avoid adding the same route PATH multiple times.
-    cors_added = set()
+    cors_added: set[str] = set()
 
     def _allow_cors(
         route: AbstractRoute | AbstractResource,
@@ -78,7 +78,7 @@ def setup_cors(app: Application, origins: list[str]) -> None:
 
         # USERNOTE: Add the route to the cors config.
         # USERNOTE: If no config passed in: Registers default CORS policies.
-        cors.add(route, config)
+        cors.add(route, config)  # type: ignore[arg-type]
 
         # USERNOTE: Add the route path str to local field "cors_added" to avoid adding the same route PATH multiple times.
         cors_added.add(path_str)
@@ -87,7 +87,7 @@ def setup_cors(app: Application, origins: list[str]) -> None:
     app[KEY_ALLOW_ALL_CORS] = lambda route: _allow_cors(
         route,
         {
-            "*": aiohttp_cors.ResourceOptions(
+            "*": aiohttp_cors.ResourceOptions(  # type: ignore[no-untyped-call]
                 allow_headers=ALLOWED_CORS_HEADERS, allow_methods="*"
             )
         },
