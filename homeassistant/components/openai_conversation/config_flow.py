@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import json
 import logging
-from types import MappingProxyType
 from typing import Any
 
 import openai
@@ -81,7 +79,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 # These recommended settings provide sensible defaults for most users while enabling core features
 RECOMMENDED_OPTIONS = {
     CONF_RECOMMENDED: True,
-    CONF_LLM_HASS_API: llm.LLM_API_ASSIST,
+    CONF_LLM_HASS_API: [llm.LLM_API_ASSIST],
     CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
 }
 
@@ -169,11 +167,7 @@ class OpenAIOptionsFlow(OptionsFlow):
     # Role in Scope: Constructor that prepares the flow for handling user configuration changes
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize options flow."""
-        # LLM: Track the recommended setting to detect UI mode changes
-        # This enables toggling between simple and advanced configuration interfaces
-        self.last_rendered_recommended = config_entry.options.get(
-            CONF_RECOMMENDED, False
-        )
+        self.options = config_entry.options.copy()
 
     # LLM: Main options flow step that handles both simple and advanced configuration modes
     # Purpose: Presents appropriate UI based on recommended mode and validates configuration changes
@@ -182,64 +176,184 @@ class OpenAIOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
-        options: dict[str, Any] | MappingProxyType[str, Any] = self.config_entry.options
-        errors: dict[str, str] = {}
+        """Manage initial options."""
+        options = self.options
+
+        hass_apis: list[SelectOptionDict] = [
+            SelectOptionDict(
+                label=api.name,
+                value=api.id,
+            )
+            for api in llm.async_get_apis(self.hass)
+        ]
+        if (suggested_llm_apis := options.get(CONF_LLM_HASS_API)) and isinstance(
+            suggested_llm_apis, str
+        ):
+            options[CONF_LLM_HASS_API] = [suggested_llm_apis]
+
+        step_schema: VolDictType = {
+            vol.Optional(
+                CONF_PROMPT,
+                description={"suggested_value": llm.DEFAULT_INSTRUCTIONS_PROMPT},
+            ): TemplateSelector(),
+            vol.Optional(CONF_LLM_HASS_API): SelectSelector(
+                SelectSelectorConfig(options=hass_apis, multiple=True)
+            ),
+            vol.Required(
+                CONF_RECOMMENDED, default=options.get(CONF_RECOMMENDED, False)
+            ): bool,
+        }
 
         if user_input is not None:
-            # USERNOTE: Check if user changed the recommended mode toggle
-            # - If no change: Validate option form and display error if violated, then create entry with latest entry options.
-            # - If recommend option has changed since last render:  Option "recommend" defaults to true, but if user confiures it to false in the option flow, we want to re-render option form with more advanced data schema.
-            if user_input[CONF_RECOMMENDED] == self.last_rendered_recommended:
-                # LLM: Same mode - validate the configuration and save if valid
-                
-                # USERNOTE: Remove LLM_HASS_API if not provided to avoid storing empty values
-                if not user_input.get(CONF_LLM_HASS_API):
-                    user_input.pop(CONF_LLM_HASS_API, None)
-                
-                # USERNOTE: Validate that selected model is supported by the integration
-                if user_input.get(CONF_CHAT_MODEL) in UNSUPPORTED_MODELS:
-                    errors[CONF_CHAT_MODEL] = "model_not_supported"
+            if not user_input.get(CONF_LLM_HASS_API):
+                user_input.pop(CONF_LLM_HASS_API, None)
 
-                # USERNOTE: Validate web search configuration compatibility
-                if user_input.get(CONF_WEB_SEARCH):
-                    # USERNOTE: Check if selected model supports web search functionality
-                    if (
-                        user_input.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-                        not in WEB_SEARCH_MODELS
-                    ):
-                        errors[CONF_WEB_SEARCH] = "web_search_not_supported"
-                    # USERNOTE: If user location is enabled, fetch location data for better search results
-                    elif user_input.get(CONF_WEB_SEARCH_USER_LOCATION):
-                        # USERNOTE: Use OpenAI to determine approximate location from Home Assistant coordinates
-                        user_input.update(await self.get_location_data())
+            if user_input[CONF_RECOMMENDED]:
+                return self.async_create_entry(title="", data=user_input)
 
-                # USERNOTE: Save entry options configuration if no validation errors occurred
-                if not errors:
-                    # USERNOTE: Upsert config entry
-                    return self.async_create_entry(title="", data=user_input)
-            else:
-                # USERNOTE: Get user toggled recommended mode to prepare to re-render with new mode settings.
-                # - Re-rendering allows showing/hiding advanced options based on user preference.
-                self.last_rendered_recommended = user_input[CONF_RECOMMENDED]
+            options.update(user_input)
+            if CONF_LLM_HASS_API in options and CONF_LLM_HASS_API not in user_input:
+                options.pop(CONF_LLM_HASS_API)
+            return await self.async_step_advanced()
 
-                # USERNOTE: Ensure core settings have sensible defaults, and not broken due to expected user request options.
-                # - This default options will then be used to configure the data schema for the option form, and the new form will
-                # be re-rendered on the client side with the new data schema.
-                options = {
-                    CONF_RECOMMENDED: user_input[CONF_RECOMMENDED],
-                    CONF_PROMPT: user_input.get(
-                        CONF_PROMPT, llm.DEFAULT_INSTRUCTIONS_PROMPT
-                    ),
-                    CONF_LLM_HASS_API: user_input.get(CONF_LLM_HASS_API),
-                }
-
-        # USERNOTE: Prepare configure form's data schema, and configure UI selectors such as use of template, select, bool.
-        # - Based on the config entry's option "CONF_RECOMMENDED", prepare simplified/advanced configure schema.
-        schema = openai_config_option_schema(self.hass, options)
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(schema),
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(step_schema), options
+            ),
+        )
+
+    async def async_step_advanced(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage advanced options."""
+        options = self.options
+        errors: dict[str, str] = {}
+
+        step_schema: VolDictType = {
+            vol.Optional(
+                CONF_CHAT_MODEL,
+                default=RECOMMENDED_CHAT_MODEL,
+            ): str,
+            vol.Optional(
+                CONF_MAX_TOKENS,
+                default=RECOMMENDED_MAX_TOKENS,
+            ): int,
+            vol.Optional(
+                CONF_TOP_P,
+                default=RECOMMENDED_TOP_P,
+            ): NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05)),
+            vol.Optional(
+                CONF_TEMPERATURE,
+                default=RECOMMENDED_TEMPERATURE,
+            ): NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05)),
+        }
+
+        if user_input is not None:
+            options.update(user_input)
+            if user_input.get(CONF_CHAT_MODEL) in UNSUPPORTED_MODELS:
+                errors[CONF_CHAT_MODEL] = "model_not_supported"
+
+            if not errors:
+                return await self.async_step_model()
+
+        return self.async_show_form(
+            step_id="advanced",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(step_schema), options
+            ),
+            errors=errors,
+        )
+
+    async def async_step_model(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage model-specific options."""
+        options = self.options
+        errors: dict[str, str] = {}
+
+        step_schema: VolDictType = {}
+
+        model = options[CONF_CHAT_MODEL]
+
+        if model.startswith("o"):
+            step_schema.update(
+                {
+                    vol.Optional(
+                        CONF_REASONING_EFFORT,
+                        default=RECOMMENDED_REASONING_EFFORT,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["low", "medium", "high"],
+                            translation_key=CONF_REASONING_EFFORT,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            )
+        elif CONF_REASONING_EFFORT in options:
+            options.pop(CONF_REASONING_EFFORT)
+
+        if model.startswith(tuple(WEB_SEARCH_MODELS)):
+            step_schema.update(
+                {
+                    vol.Optional(
+                        CONF_WEB_SEARCH,
+                        default=RECOMMENDED_WEB_SEARCH,
+                    ): bool,
+                    vol.Optional(
+                        CONF_WEB_SEARCH_CONTEXT_SIZE,
+                        default=RECOMMENDED_WEB_SEARCH_CONTEXT_SIZE,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=["low", "medium", "high"],
+                            translation_key=CONF_WEB_SEARCH_CONTEXT_SIZE,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_WEB_SEARCH_USER_LOCATION,
+                        default=RECOMMENDED_WEB_SEARCH_USER_LOCATION,
+                    ): bool,
+                }
+            )
+        elif CONF_WEB_SEARCH in options:
+            options = {
+                k: v
+                for k, v in options.items()
+                if k
+                not in (
+                    CONF_WEB_SEARCH,
+                    CONF_WEB_SEARCH_CONTEXT_SIZE,
+                    CONF_WEB_SEARCH_USER_LOCATION,
+                    CONF_WEB_SEARCH_CITY,
+                    CONF_WEB_SEARCH_REGION,
+                    CONF_WEB_SEARCH_COUNTRY,
+                    CONF_WEB_SEARCH_TIMEZONE,
+                )
+            }
+
+        if not step_schema:
+            return self.async_create_entry(title="", data=options)
+
+        if user_input is not None:
+            if user_input.get(CONF_WEB_SEARCH):
+                if user_input.get(CONF_WEB_SEARCH_USER_LOCATION):
+                    user_input.update(await self._get_location_data())
+                else:
+                    options.pop(CONF_WEB_SEARCH_CITY, None)
+                    options.pop(CONF_WEB_SEARCH_REGION, None)
+                    options.pop(CONF_WEB_SEARCH_COUNTRY, None)
+                    options.pop(CONF_WEB_SEARCH_TIMEZONE, None)
+
+            options.update(user_input)
+            return self.async_create_entry(title="", data=options)
+
+        return self.async_show_form(
+            step_id="model",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(step_schema), options
+            ),
             errors=errors,
         )
 
@@ -247,6 +361,7 @@ class OpenAIOptionsFlow(OptionsFlow):
     # - Uses OpenAI to convert Home Assistant coordinates into city/region names for search context
     # - Enhances web search accuracy by providing location-aware search results
     async def get_location_data(self) -> dict[str, str]:
+    async def _get_location_data(self) -> dict[str, str]:
         """Get approximate location data of the user."""
         location_data: dict[str, str] = {}
         
@@ -312,117 +427,3 @@ class OpenAIOptionsFlow(OptionsFlow):
         _LOGGER.debug("Location data: %s", location_data)
 
         return location_data
-
-
-# USERNOTE: Prepare configure form's data schema, and configure UI selectors such as use of template, select, bool.
-# - Based on the config entry's option "CONF_RECOMMENDED", prepare simplified/advanced configure schema.
-def openai_config_option_schema(
-    hass: HomeAssistant,
-    options: Mapping[str, Any],
-) -> VolDictType:
-    """Return a schema for OpenAI completion options."""
-    # USERNOTE: Build list of available Home Assistant LLM APIs for user selection
-    # - Currently only support "Assist API"
-    hass_apis: list[SelectOptionDict] = [
-        SelectOptionDict(
-            label=api.name,
-            value=api.id,
-        )
-        for api in llm.async_get_apis(hass)
-    ]
-    
-    # USERNOTE: Ensure the suggested LLM apis is in LIST
-    # Example: "assist" -> ["assist"]
-    if (suggested_llm_apis := options.get(CONF_LLM_HASS_API)) and isinstance(
-        suggested_llm_apis, str
-    ):
-        suggested_llm_apis = [suggested_llm_apis]
-    
-    # USERNOTE: Prepare data schema for the configure option flow
-    schema: VolDictType = {
-        vol.Optional(
-            CONF_PROMPT,
-            description={
-                "suggested_value": options.get(
-                    CONF_PROMPT, llm.DEFAULT_INSTRUCTIONS_PROMPT
-                )
-            },
-        ): TemplateSelector(),
-        vol.Optional(
-            CONF_LLM_HASS_API,
-            description={"suggested_value": suggested_llm_apis},
-        ): SelectSelector(SelectSelectorConfig(options=hass_apis, multiple=True)),
-        vol.Required(
-            CONF_RECOMMENDED, default=options.get(CONF_RECOMMENDED, False)
-        ): bool,
-    }
-
-    # USERNOTE: Return simplified schema if user prefers recommended settings
-    # - Based on CONF_RECOMMENDED flag, default to TRUE.
-    # USERNOTE: Can be configured in config entry via YAML config to update "recommend" to false.
-    if options.get(CONF_RECOMMENDED):
-        return schema
-
-    # USERNOTE: Add advanced configuration options for power users that do not want to use recommended schema.
-    # - These settings provide fine-grained control over OpenAI model behavior
-    schema.update(
-        {
-            vol.Optional(
-                CONF_CHAT_MODEL,
-                description={"suggested_value": options.get(CONF_CHAT_MODEL)},
-                default=RECOMMENDED_CHAT_MODEL,
-            ): str,
-            vol.Optional(
-                CONF_MAX_TOKENS,
-                description={"suggested_value": options.get(CONF_MAX_TOKENS)},
-                default=RECOMMENDED_MAX_TOKENS,
-            ): int,
-            vol.Optional(
-                CONF_TOP_P,
-                description={"suggested_value": options.get(CONF_TOP_P)},
-                default=RECOMMENDED_TOP_P,
-            ): NumberSelector(NumberSelectorConfig(min=0, max=1, step=0.05)),
-            vol.Optional(
-                CONF_TEMPERATURE,
-                description={"suggested_value": options.get(CONF_TEMPERATURE)},
-                default=RECOMMENDED_TEMPERATURE,
-            ): NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05)),
-            vol.Optional(
-                CONF_REASONING_EFFORT,
-                description={"suggested_value": options.get(CONF_REASONING_EFFORT)},
-                default=RECOMMENDED_REASONING_EFFORT,
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=["low", "medium", "high"],
-                    translation_key=CONF_REASONING_EFFORT,
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            ),
-            vol.Optional(
-                CONF_WEB_SEARCH,
-                description={"suggested_value": options.get(CONF_WEB_SEARCH)},
-                default=RECOMMENDED_WEB_SEARCH,
-            ): bool,
-            vol.Optional(
-                CONF_WEB_SEARCH_CONTEXT_SIZE,
-                description={
-                    "suggested_value": options.get(CONF_WEB_SEARCH_CONTEXT_SIZE)
-                },
-                default=RECOMMENDED_WEB_SEARCH_CONTEXT_SIZE,
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=["low", "medium", "high"],
-                    translation_key=CONF_WEB_SEARCH_CONTEXT_SIZE,
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            ),
-            vol.Optional(
-                CONF_WEB_SEARCH_USER_LOCATION,
-                description={
-                    "suggested_value": options.get(CONF_WEB_SEARCH_USER_LOCATION)
-                },
-                default=RECOMMENDED_WEB_SEARCH_USER_LOCATION,
-            ): bool,
-        }
-    )
-    return schema

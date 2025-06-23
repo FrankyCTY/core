@@ -107,8 +107,7 @@ def async_notify_setup_error(
 
     This method must be run in the event loop.
     """
-    # pylint: disable-next=import-outside-toplevel
-    from .components import persistent_notification
+    from .components import persistent_notification  # noqa: PLC0415
 
     if (errors := hass.data.get(_DATA_PERSISTENT_ERRORS)) is None:
         errors = hass.data[_DATA_PERSISTENT_ERRORS] = {}
@@ -313,6 +312,7 @@ def _log_error_setup_error(
 # - Set up all associated config entries (via `async_setup_locked`)
 # - Register the integration as loaded and fire `EVENT_COMPONENT_LOADED`
 # - Clean up setup tracking state for the domain
+
 
 # Returns:
 #     True if the integration was successfully set up; False otherwise.

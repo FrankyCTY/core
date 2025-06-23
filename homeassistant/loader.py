@@ -296,7 +296,7 @@ def _get_custom_components(hass: HomeAssistant) -> dict[str, Integration]:
         return {}
 
     try:
-        import custom_components  # pylint: disable=import-outside-toplevel
+        import custom_components  # noqa: PLC0415
     except ImportError:
         return {}
 
@@ -1122,7 +1122,6 @@ class Integration:
         platforms = await self.async_get_platforms((platform_name,))
         return platforms[platform_name]
 
-
     # USERNOTE: Load all the platforms for "this" integration.
     # USERNOTE: Involved loading platforms for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
     async def async_get_platforms(
@@ -1493,7 +1492,7 @@ async def async_get_integrations(
 
     # Now the rest use resolve_from_root
     if needed:
-        from . import components  # pylint: disable=import-outside-toplevel
+        from . import components  # noqa: PLC0415
 
         # USERNOTE: Stage 3: Retrieve the rest from the integrations directory.
         # USERNOTE: Uses thread pool to avoid blocking the event loop, as we know this process requires blocking I/O as it opens files e.g. in order to get all the information to form the integration object.
@@ -1843,10 +1842,10 @@ def _async_mount_config_dir(hass: HomeAssistant) -> None:
     # USERNOTE: This ensure when we bootstrap ha core, we load the config/custom_components/ folder first.
     sys.path.insert(0, hass.config.config_dir)
     with suppress(ImportError):
-        import custom_components  # pylint: disable=import-outside-toplevel  # noqa: F401
+        import custom_components  # noqa: F401, PLC0415
     # USERNOTE: Remove after importing as the process might import the custom_components from other places later.
     sys.path.remove(hass.config.config_dir)
-    # USERNOTE: Clear the cache so that the next time we import custom_components, it can be imported from the config dir.
+    # USERNOTE: The import cache is cleared, so future imports of custom_components will re-evaluate path precedence (rather than use cached resolution).
     sys.path_importer_cache.pop(hass.config.config_dir, None)
 
 

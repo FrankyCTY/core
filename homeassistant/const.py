@@ -41,6 +41,7 @@ PLATFORM_FORMAT: Final = "{platform}.{domain}"
 class Platform(StrEnum):
     """Available entity platforms."""
 
+    AI_TASK = "ai_task"
     AIR_QUALITY = "air_quality"
     ALARM_CONTROL_PANEL = "alarm_control_panel"
     ASSIST_SATELLITE = "assist_satellite"
@@ -563,7 +564,7 @@ ATTR_STATE: Final = "state"
 ATTR_EDITABLE: Final = "editable"
 ATTR_OPTION: Final = "option"
 
-# The entity has been restored with restore state
+# The entity state has been partially restored by the entity registry
 ATTR_RESTORED: Final = "restored"
 
 # Bitfield of supported component features for the entity
