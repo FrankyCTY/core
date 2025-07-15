@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-import base64
-from mimetypes import guess_file_type
 from pathlib import Path
+from types import MappingProxyType
 
 import openai
 from openai.types.images_response import ImagesResponse
 from openai.types.responses import (
     EasyInputMessageParam,
     Response,
-    ResponseInputFileParam,
-    ResponseInputImageParam,
     ResponseInputMessageContentListParam,
     ResponseInputParam,
     ResponseInputTextParam,
 )
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import (
     HomeAssistant,
@@ -32,7 +29,12 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
-from homeassistant.helpers import config_validation as cv, selector
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+    selector,
+)
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
 
@@ -44,40 +46,28 @@ from .const import (
     CONF_REASONING_EFFORT,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    DEFAULT_AI_TASK_NAME,
+    DEFAULT_NAME,
     DOMAIN,
     LOGGER,
+    RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_REASONING_EFFORT,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
+from .entity import async_prepare_files_for_prompt
 
 SERVICE_GENERATE_IMAGE = "generate_image"
 SERVICE_GENERATE_CONTENT = "generate_content"
 
-# USERNOTE: Define the platform dependencies for this integration. The platform is expected to have a corresponding {platform domain}.py file in this integration directory.
-PLATFORMS = (Platform.CONVERSATION,)
-# USERNOTE: This integration does not support setup from YAML, so we set up config schema to log any attempts to configure from YAML.
+PLATFORMS = (Platform.AI_TASK, Platform.CONVERSATION)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # LLM: Type alias for config entries that store OpenAI client in runtime_data
 # This provides type safety for accessing the authenticated OpenAI client
 type OpenAIConfigEntry = ConfigEntry[openai.AsyncClient]
-
-
-# LLM: Utility function for multi-modal file processing
-# Purpose: Converts local files to base64 data URLs for OpenAI API consumption
-# Caveats: Only supports images and PDFs, requires file system access
-# Role in Scope: Enables multi-modal conversations by preparing file attachments
-def encode_file(file_path: str) -> tuple[str, str]:
-    """Return base64 version of file contents."""
-    # LLM: Detect MIME type to determine how OpenAI should process the file
-    mime_type, _ = guess_file_type(file_path)
-    if mime_type is None:
-        mime_type = "application/octet-stream"
-    with open(file_path, "rb") as image_file:
-        return (mime_type, base64.b64encode(image_file.read()).decode("utf-8"))
 
 
 # LLM: Function for asynchronous setup of the integration.
@@ -96,6 +86,7 @@ def encode_file(file_path: str) -> tuple[str, str]:
 # - Complements `async_setup_entry` and is used in tandem with config entry lifecycle
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up OpenAI Conversation."""
+    await async_migrate_integration(hass)
 
     # USERNOTE: Service handler for DALL-E image generation
     # - Allows users to generate images via Home Assistant services
@@ -159,9 +150,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 translation_placeholders={"config_entry": entry_id},
             )
 
-        # USERNOTE: Get model configuration from entry options with fallback to defaults
-        # USERNOTE: If the user did not update corresponding option in option flow, then the default model is used.
-        model: str = entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        # Get first conversation subentry for options
+        conversation_subentry = next(
+            (
+                sub
+                for sub in entry.subentries.values()
+                if sub.subentry_type == "conversation"
+            ),
+            None,
+        )
+        if not conversation_subentry:
+            raise ServiceValidationError("No conversation configuration found")
+
+        model: str = conversation_subentry.data.get(
+            CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL
+        )
         client: openai.AsyncClient = entry.runtime_data
 
         # USERNOTE: Extract user prompt from the service call request payload.
@@ -169,87 +172,48 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             ResponseInputTextParam(type="input_text", text=call.data[CONF_PROMPT])
         ]
 
-        # LLM: File processing function for multi-modal inputs, it will validate and encode file attachments for OpenAI API
-        # - Restricted to images and PDFs, requires HA file access permissions
-        # - Appends the file attachments to the content list, which will later be included as part of the same user message.
-        def append_files_to_content() -> None:
-            for filename in call.data[CONF_FILENAMES]:
-                # LLM: Security check - ensure file is in allowed directories
-                # Prevents unauthorized file system access via service calls
+        if filenames := call.data.get(CONF_FILENAMES):
+            for filename in filenames:
                 if not hass.config.is_allowed_path(filename):
                     raise HomeAssistantError(
                         f"Cannot read `{filename}`, no access to path; "
                         "`allowlist_external_dirs` may need to be adjusted in "
                         "`configuration.yaml`"
                     )
-                # LLM: Verify file exists before attempting to read it
-                if not Path(filename).exists():
-                    raise HomeAssistantError(f"`{filename}` does not exist")
 
-                # LLM: Encode file as base64 version of UTF-8 encoded content, and determine how to present it to OpenAI
-                mime_type, base64_file = encode_file(filename)
-                if "image/" in mime_type:
-                    # LLM: Add image content for vision-capable models
-                    content.append(
-                        ResponseInputImageParam(
-                            type="input_image",
-                            image_url=f"data:{mime_type};base64,{base64_file}",
-                            detail="auto",
-                        )
-                    )
-                elif "application/pdf" in mime_type:
-                    # LLM: Add PDF content for document analysis
-                    content.append(
-                        ResponseInputFileParam(
-                            type="input_file",
-                            filename=filename,
-                            file_data=f"data:{mime_type};base64,{base64_file}",
-                        )
-                    )
-                else:
-                    # LLM: Reject unsupported file types to prevent API errors
-                    raise HomeAssistantError(
-                        "Only images and PDF are supported by the OpenAI API,"
-                        f"`{filename}` is not an image file or PDF"
-                    )
-
-        # USERNOTE: Process file attachments in executor to avoid blocking the event loop
-        # File I/O operations can be slow and should not block async operations
-        if CONF_FILENAMES in call.data:
-            await hass.async_add_executor_job(append_files_to_content)
+            content.extend(
+                await async_prepare_files_for_prompt(
+                    hass, [Path(filename) for filename in filenames]
+                )
+            )
 
         # USERNOTE: Form a user message for openAI
         messages: ResponseInputParam = [
             EasyInputMessageParam(type="message", role="user", content=content)
         ]
 
-        try:
-            # LLM: Build API request parameters from user configuration
-            # Combines entry options with call data for complete request
-            model_args = {
-                "model": model,
-                "input": messages,
-                "max_output_tokens": entry.options.get(
-                    CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
-                ),
-                "top_p": entry.options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
-                "temperature": entry.options.get(
-                    CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
-                ),
-                "user": call.context.user_id,
-                "store": False,
+        model_args = {
+            "model": model,
+            "input": messages,
+            "max_output_tokens": conversation_subentry.data.get(
+                CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
+            ),
+            "top_p": conversation_subentry.data.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+            "temperature": conversation_subentry.data.get(
+                CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
+            ),
+            "user": call.context.user_id,
+            "store": False,
+        }
+
+        if model.startswith("o"):
+            model_args["reasoning"] = {
+                "effort": conversation_subentry.data.get(
+                    CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT
+                )
             }
 
-            # LLM: Add reasoning effort for OpenAI's "o" series models (o1, o3, etc.)
-            # These models support enhanced reasoning capabilities with effort control
-            if model.startswith("o"):
-                model_args["reasoning"] = {
-                    "effort": entry.options.get(
-                        CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT
-                    )
-                }
-
-            # LLM: Call OpenAI API with configured parameters
+        try:
             response: Response = await client.responses.create(**model_args)
 
         except openai.OpenAIError as err:
@@ -369,6 +333,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenAIConfigEntry) -> bo
     # USERNOTE: - Ensure the platform's root integrations (e.g. conversation) are loaded into DATA_INTEGRATIONS cache.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
+
     return True
 
 
@@ -380,3 +346,122 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # LLM: Unload all platforms that were set up during entry setup
     # This removes the conversation entity and cleans up registrations
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_update_options(hass: HomeAssistant, entry: OpenAIConfigEntry) -> None:
+    """Update options."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_migrate_integration(hass: HomeAssistant) -> None:
+    """Migrate integration entry structure."""
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not any(entry.version == 1 for entry in entries):
+        return
+
+    api_keys_entries: dict[str, ConfigEntry] = {}
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+
+    for entry in entries:
+        use_existing = False
+        subentry = ConfigSubentry(
+            data=entry.options,
+            subentry_type="conversation",
+            title=entry.title,
+            unique_id=None,
+        )
+        if entry.data[CONF_API_KEY] not in api_keys_entries:
+            use_existing = True
+            api_keys_entries[entry.data[CONF_API_KEY]] = entry
+
+        parent_entry = api_keys_entries[entry.data[CONF_API_KEY]]
+
+        hass.config_entries.async_add_subentry(parent_entry, subentry)
+        conversation_entity = entity_registry.async_get_entity_id(
+            "conversation",
+            DOMAIN,
+            entry.entry_id,
+        )
+        if conversation_entity is not None:
+            entity_registry.async_update_entity(
+                conversation_entity,
+                config_entry_id=parent_entry.entry_id,
+                config_subentry_id=subentry.subentry_id,
+                new_unique_id=subentry.subentry_id,
+            )
+
+        device = device_registry.async_get_device(
+            identifiers={(DOMAIN, entry.entry_id)}
+        )
+        if device is not None:
+            device_registry.async_update_device(
+                device.id,
+                new_identifiers={(DOMAIN, subentry.subentry_id)},
+                add_config_subentry_id=subentry.subentry_id,
+                add_config_entry_id=parent_entry.entry_id,
+            )
+            if parent_entry.entry_id != entry.entry_id:
+                device_registry.async_update_device(
+                    device.id,
+                    remove_config_entry_id=entry.entry_id,
+                )
+            else:
+                device_registry.async_update_device(
+                    device.id,
+                    remove_config_entry_id=entry.entry_id,
+                    remove_config_subentry_id=None,
+                )
+
+        if not use_existing:
+            await hass.config_entries.async_remove(entry.entry_id)
+        else:
+            hass.config_entries.async_update_entry(
+                entry,
+                title=DEFAULT_NAME,
+                options={},
+                version=2,
+                minor_version=2,
+            )
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: OpenAIConfigEntry) -> bool:
+    """Migrate entry."""
+    LOGGER.debug("Migrating from version %s:%s", entry.version, entry.minor_version)
+
+    if entry.version > 2:
+        # This means the user has downgraded from a future version
+        return False
+
+    if entry.version == 2 and entry.minor_version == 1:
+        # Correct broken device migration in Home Assistant Core 2025.7.0b0-2025.7.0b1
+        device_registry = dr.async_get(hass)
+        for device in dr.async_entries_for_config_entry(
+            device_registry, entry.entry_id
+        ):
+            device_registry.async_update_device(
+                device.id,
+                remove_config_entry_id=entry.entry_id,
+                remove_config_subentry_id=None,
+            )
+
+        hass.config_entries.async_update_entry(entry, minor_version=2)
+
+    if entry.version == 2 and entry.minor_version == 2:
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType(RECOMMENDED_AI_TASK_OPTIONS),
+                subentry_type="ai_task_data",
+                title=DEFAULT_AI_TASK_NAME,
+                unique_id=None,
+            ),
+        )
+        hass.config_entries.async_update_entry(entry, minor_version=3)
+
+    LOGGER.debug(
+        "Migration to version %s:%s successful", entry.version, entry.minor_version
+    )
+
+    return True

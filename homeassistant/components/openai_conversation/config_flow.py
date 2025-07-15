@@ -13,17 +13,20 @@ from voluptuous_openapi import convert
 from homeassistant.components.zone import ENTITY_ID_HOME
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    ConfigSubentryFlow,
+    SubentryFlowResult,
 )
 from homeassistant.const import (
     ATTR_LATITUDE,
     ATTR_LONGITUDE,
     CONF_API_KEY,
     CONF_LLM_HASS_API,
+    CONF_NAME,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import llm
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
@@ -52,8 +55,12 @@ from .const import (
     CONF_WEB_SEARCH_REGION,
     CONF_WEB_SEARCH_TIMEZONE,
     CONF_WEB_SEARCH_USER_LOCATION,
+    DEFAULT_AI_TASK_NAME,
+    DEFAULT_CONVERSATION_NAME,
     DOMAIN,
+    RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_CONVERSATION_OPTIONS,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_REASONING_EFFORT,
     RECOMMENDED_TEMPERATURE,
@@ -62,7 +69,7 @@ from .const import (
     RECOMMENDED_WEB_SEARCH_CONTEXT_SIZE,
     RECOMMENDED_WEB_SEARCH_USER_LOCATION,
     UNSUPPORTED_MODELS,
-    WEB_SEARCH_MODELS,
+    UNSUPPORTED_WEB_SEARCH_MODELS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -74,14 +81,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_API_KEY): str,
     }
 )
-
-# LLM: Default configuration options applied when a new integration entry is created
-# These recommended settings provide sensible defaults for most users while enabling core features
-RECOMMENDED_OPTIONS = {
-    CONF_RECOMMENDED: True,
-    CONF_LLM_HASS_API: [llm.LLM_API_ASSIST],
-    CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
-}
 
 
 # LLM: Validates OpenAI API credentials by attempting to connect and list available models
@@ -104,7 +103,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
 class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for OpenAI Conversation."""
 
-    VERSION = 1
+    VERSION = 2
+    MINOR_VERSION = 3
 
     # LLM: Handles the initial setup step where users provide their OpenAI API key
     # This collects and validates API credentials, creates integration entry on success
@@ -122,6 +122,7 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
         errors: dict[str, str] = {}
 
+        self._async_abort_entries_match(user_input)
         try:
             await validate_input(self.hass, user_input)
         except openai.APIConnectionError:
@@ -137,37 +138,65 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(
                 title="ChatGPT",
                 data=user_input,
-                options=RECOMMENDED_OPTIONS,
+                subentries=[
+                    {
+                        "subentry_type": "conversation",
+                        "data": RECOMMENDED_CONVERSATION_OPTIONS,
+                        "title": DEFAULT_CONVERSATION_NAME,
+                        "unique_id": None,
+                    },
+                    {
+                        "subentry_type": "ai_task_data",
+                        "data": RECOMMENDED_AI_TASK_OPTIONS,
+                        "title": DEFAULT_AI_TASK_NAME,
+                        "unique_id": None,
+                    },
+                ],
             )
 
-        # USERNOTE: If there is exception, this shows form again with error messages for user to retry with correct API key
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    # USERNOTE: This configure the option flow, and allow the config entry's options to be edited.
-    # USERNOTE: An Options Flow is a user interface-driven setup wizard (flow) that allows editing runtime configuration options of an integration after it has been installed.
-    # https://developers.home-assistant.io/docs/config_entries_options_flow_handler
-    @staticmethod
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> OptionsFlow:
-        """Create the options flow."""
-        return OpenAIOptionsFlow(config_entry)
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return subentries supported by this integration."""
+        return {
+            "conversation": OpenAISubentryFlowHandler,
+            "ai_task_data": OpenAISubentryFlowHandler,
+        }
 
 
-# USERNOTE: This configure the option flow, and allow the config entry's options to be edited.
-# USERNOTE: An Options Flow is a user interface-driven setup wizard (flow) that allows editing runtime configuration options of an integration after it has been installed.
-# https://developers.home-assistant.io/docs/config_entries_options_flow_handler
-class OpenAIOptionsFlow(OptionsFlow):
-    """OpenAI config flow options handler."""
+class OpenAISubentryFlowHandler(ConfigSubentryFlow):
+    """Flow for managing OpenAI subentries."""
 
-    # LLM: Initializes options flow with state tracking for dynamic UI rendering
-    # Purpose: Sets up flow state and remembers current recommended mode setting
-    # Role in Scope: Constructor that prepares the flow for handling user configuration changes
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.options = config_entry.options.copy()
+    last_rendered_recommended = False
+    options: dict[str, Any]
+
+    @property
+    def _is_new(self) -> bool:
+        """Return if this is a new subentry."""
+        return self.source == "user"
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Add a subentry."""
+        if self._subentry_type == "ai_task_data":
+            self.options = RECOMMENDED_AI_TASK_OPTIONS.copy()
+        else:
+            self.options = RECOMMENDED_CONVERSATION_OPTIONS.copy()
+        return await self.async_step_init()
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Handle reconfiguration of a subentry."""
+        self.options = self._get_reconfigure_subentry().data.copy()
+        return await self.async_step_init()
 
     # LLM: Main options flow step that handles both simple and advanced configuration modes
     # Purpose: Presents appropriate UI based on recommended mode and validates configuration changes
@@ -175,8 +204,12 @@ class OpenAIOptionsFlow(OptionsFlow):
     # Caveats: Re-renders form when switching modes, validates web search model support, handles location data
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> SubentryFlowResult:
         """Manage initial options."""
+        # abort if entry is not loaded
+        if self._get_entry().state != ConfigEntryState.LOADED:
+            return self.async_abort(reason="entry_not_loaded")
+
         options = self.options
 
         hass_apis: list[SelectOptionDict] = [
@@ -191,25 +224,51 @@ class OpenAIOptionsFlow(OptionsFlow):
         ):
             options[CONF_LLM_HASS_API] = [suggested_llm_apis]
 
-        step_schema: VolDictType = {
-            vol.Optional(
-                CONF_PROMPT,
-                description={"suggested_value": llm.DEFAULT_INSTRUCTIONS_PROMPT},
-            ): TemplateSelector(),
-            vol.Optional(CONF_LLM_HASS_API): SelectSelector(
-                SelectSelectorConfig(options=hass_apis, multiple=True)
-            ),
-            vol.Required(
-                CONF_RECOMMENDED, default=options.get(CONF_RECOMMENDED, False)
-            ): bool,
-        }
+        step_schema: VolDictType = {}
+
+        if self._is_new:
+            if self._subentry_type == "ai_task_data":
+                default_name = DEFAULT_AI_TASK_NAME
+            else:
+                default_name = DEFAULT_CONVERSATION_NAME
+            step_schema[vol.Required(CONF_NAME, default=default_name)] = str
+
+        if self._subentry_type == "conversation":
+            step_schema.update(
+                {
+                    vol.Optional(
+                        CONF_PROMPT,
+                        description={
+                            "suggested_value": options.get(
+                                CONF_PROMPT, llm.DEFAULT_INSTRUCTIONS_PROMPT
+                            )
+                        },
+                    ): TemplateSelector(),
+                    vol.Optional(CONF_LLM_HASS_API): SelectSelector(
+                        SelectSelectorConfig(options=hass_apis, multiple=True)
+                    ),
+                }
+            )
+
+        step_schema[
+            vol.Required(CONF_RECOMMENDED, default=options.get(CONF_RECOMMENDED, False))
+        ] = bool
 
         if user_input is not None:
             if not user_input.get(CONF_LLM_HASS_API):
                 user_input.pop(CONF_LLM_HASS_API, None)
 
             if user_input[CONF_RECOMMENDED]:
-                return self.async_create_entry(title="", data=user_input)
+                if self._is_new:
+                    return self.async_create_entry(
+                        title=user_input.pop(CONF_NAME),
+                        data=user_input,
+                    )
+                return self.async_update_and_abort(
+                    self._get_entry(),
+                    self._get_reconfigure_subentry(),
+                    data=user_input,
+                )
 
             options.update(user_input)
             if CONF_LLM_HASS_API in options and CONF_LLM_HASS_API not in user_input:
@@ -225,7 +284,7 @@ class OpenAIOptionsFlow(OptionsFlow):
 
     async def async_step_advanced(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> SubentryFlowResult:
         """Manage advanced options."""
         options = self.options
         errors: dict[str, str] = {}
@@ -267,7 +326,7 @@ class OpenAIOptionsFlow(OptionsFlow):
 
     async def async_step_model(
         self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    ) -> SubentryFlowResult:
         """Manage model-specific options."""
         options = self.options
         errors: dict[str, str] = {}
@@ -294,7 +353,9 @@ class OpenAIOptionsFlow(OptionsFlow):
         elif CONF_REASONING_EFFORT in options:
             options.pop(CONF_REASONING_EFFORT)
 
-        if model.startswith(tuple(WEB_SEARCH_MODELS)):
+        if self._subentry_type == "conversation" and not model.startswith(
+            tuple(UNSUPPORTED_WEB_SEARCH_MODELS)
+        ):
             step_schema.update(
                 {
                     vol.Optional(
@@ -334,7 +395,16 @@ class OpenAIOptionsFlow(OptionsFlow):
             }
 
         if not step_schema:
-            return self.async_create_entry(title="", data=options)
+            if self._is_new:
+                return self.async_create_entry(
+                    title=options.pop(CONF_NAME),
+                    data=options,
+                )
+            return self.async_update_and_abort(
+                self._get_entry(),
+                self._get_reconfigure_subentry(),
+                data=options,
+            )
 
         if user_input is not None:
             if user_input.get(CONF_WEB_SEARCH):
@@ -347,7 +417,16 @@ class OpenAIOptionsFlow(OptionsFlow):
                     options.pop(CONF_WEB_SEARCH_TIMEZONE, None)
 
             options.update(user_input)
-            return self.async_create_entry(title="", data=options)
+            if self._is_new:
+                return self.async_create_entry(
+                    title=options.pop(CONF_NAME),
+                    data=options,
+                )
+            return self.async_update_and_abort(
+                self._get_entry(),
+                self._get_reconfigure_subentry(),
+                data=options,
+            )
 
         return self.async_show_form(
             step_id="model",
@@ -371,7 +450,7 @@ class OpenAIOptionsFlow(OptionsFlow):
         if zone_home is not None:
             # USERNOTE: Create OpenAI client to perform coordinate-to-location conversion Get user home location.
             client = openai.AsyncOpenAI(
-                api_key=self.config_entry.data[CONF_API_KEY],
+                api_key=self._get_entry().data[CONF_API_KEY],
                 http_client=get_async_client(self.hass),
             )
             

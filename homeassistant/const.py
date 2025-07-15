@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 APPLICATION_NAME: Final = "HomeAssistant"
 MAJOR_VERSION: Final = 2025
-MINOR_VERSION: Final = 7
+MINOR_VERSION: Final = 8
 PATCH_VERSION: Final = "0.dev0"
 __short_version__: Final = f"{MAJOR_VERSION}.{MINOR_VERSION}"
 __version__: Final = f"{__short_version__}.{PATCH_VERSION}"
@@ -911,6 +911,7 @@ class UnitOfPrecipitationDepth(StrEnum):
 
 
 # Concentration units
+CONCENTRATION_GRAMS_PER_CUBIC_METER: Final = "g/m³"
 CONCENTRATION_MICROGRAMS_PER_CUBIC_METER: Final = "µg/m³"
 CONCENTRATION_MILLIGRAMS_PER_CUBIC_METER: Final = "mg/m³"
 CONCENTRATION_MICROGRAMS_PER_CUBIC_FOOT: Final = "μg/ft³"
