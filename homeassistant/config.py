@@ -209,10 +209,13 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
     This function allows a component inside the asyncio loop to reload its
     configuration by itself. Include package merge.
     """
+    # USERNOTE: Loads from config/secrets.yaml: Creates a Secrets helper to handle loading secrets from secrets.yaml properly during parsing.
+    # USERNOTE: Secrets class is from a ha library: https://github.com/home-assistant-libs/annotatedyaml/blob/main/src/annotatedyaml/loader.py
     secrets = Secrets(Path(hass.config.config_dir))
 
     # Not using async_add_executor_job because this is an internal method.
     try:
+        # USERNOTE: Loads the config/configuration.yaml file into a dict.
         config = await hass.loop.run_in_executor(
             None,
             load_yaml_config_file,
@@ -223,6 +226,7 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
         if not (base_exc := exc.__cause__) or not isinstance(base_exc, MarkedYAMLError):
             raise
 
+        # USERNOTE: Rewrite the exception paths to be relative to the hass config dir for easier debugging.
         # Rewrite path to offending YAML file to be relative the hass config dir
         if base_exc.context_mark and base_exc.context_mark.name:
             base_exc.context_mark.name = _relpath(hass, base_exc.context_mark.name)
@@ -230,6 +234,7 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
             base_exc.problem_mark.name = _relpath(hass, base_exc.problem_mark.name)
         raise
 
+    # USERNOTE: Returns a safe, valid configuration dictionary for the system to use.
     invalid_domains = []
     for key in config:
         try:
@@ -241,10 +246,12 @@ async def async_hass_config_yaml(hass: HomeAssistant) -> dict:
             _LOGGER.error("Invalid domain '%s'%s", key, suffix)
             invalid_domains.append(key)
     for invalid_domain in invalid_domains:
+        # USERNOTE: Remove invalid domain keys from the config.
         config.pop(invalid_domain)
 
     core_config = config.get(HOMEASSISTANT_DOMAIN, {})
     try:
+        # USERNOTE: Merge and validate packages: configs inside homeassistant: section.
         await merge_packages_config(hass, config, core_config.get(CONF_PACKAGES, {}))
     except vol.Invalid as exc:
         suffix = ""
@@ -1091,6 +1098,42 @@ async def _async_load_and_validate_platform_integration(
     return None
 
 
+"""
+USERNOTE: Validate and normalize the YAML configuration for a specific integration.
+
+This function is part of Home Assistant’s core config processing. It is invoked
+during startup or config checks to validate the configuration block for a given
+component (integration), including any platform-level definitions.
+
+It returns an IntegrationConfigInfo containing:
+- The validated config (if successful)
+- Any exceptions encountered during validation (for user-facing error reporting)
+
+Validation process:
+1. Load the integration's component module (e.g. `components.light`).
+   - If the import fails, capture the error and return.
+
+2. Check if the integration provides a `config` platform module with a
+   custom `async_validate_config()` function.
+   - If present, call it to validate the config.
+   - On failure, return error info.
+
+3. If no custom validator is available, fall back to using `CONFIG_SCHEMA`
+   (a Voluptuous schema) defined in the component.
+
+4. If the component supports platforms (e.g., `sensor`, `light`), iterate
+   through all platform configs (e.g., `sensor: - platform: mqtt`) and:
+   - Validate each against the component's `PLATFORM_SCHEMA`.
+   - Try to load and validate each platform integration (e.g. `mqtt.sensor`).
+   - Collect errors or validated platform configs.
+
+5. Use asyncio.gather to load platform modules in parallel, improving startup performance.
+
+6. Return a sanitized config dict with only validated data, and a list of
+   collected validation errors.
+"""
+
+
 async def async_process_component_config(
     hass: HomeAssistant,
     config: ConfigType,
@@ -1107,6 +1150,7 @@ async def async_process_component_config(
     integration_docs = integration.documentation
     config_exceptions: list[ConfigExceptionInfo] = []
 
+    # USERNOTE: If the component is not provided, then we load the integration, and cast it to component protocol.
     if not component:
         try:
             component = await integration.async_get_component()

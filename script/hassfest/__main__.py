@@ -35,6 +35,7 @@ from . import (
 )
 from .model import Config, Integration
 
+# USERNOTE: Integration plugins validators
 INTEGRATION_PLUGINS = [
     application_credentials,
     bluetooth,
@@ -172,11 +173,14 @@ def main() -> int:
             integrations[integration.domain] = integration
 
     else:
+        # USERNOTE: integrations = dict[domain, desialized manifest content]
         integrations = Integration.load_dir(config.core_integrations_path, config)
+        # USERNOTE: Includes HASS core plugins validation helpers
         plugins += HASS_PLUGINS
 
     for plugin in plugins:
         plugin_name = plugin.__name__.rsplit(".", maxsplit=1)[-1]
+        # USERNOTE: Skip pluging that is not requested.
         if plugin_name not in config.plugins:
             continue
         try:
@@ -188,6 +192,7 @@ def main() -> int:
                 and not config.specific_integrations
             ):
                 print()
+            # USERNOTE: Use plugin validator to validate component in each integration.
             plugin.validate(integrations, config)
             print(f" done in {monotonic() - start:.2f}s")
         except RuntimeError as err:
@@ -259,6 +264,7 @@ def print_integrations_status(
         print(f"Integration {integration.domain}{extra}:")
         for error in integration.errors:
             if show_fixable_errors or not error.fixable:
+                # USERNOTE: Log unfixable errors of the integration that is determined as invalid.
                 print("*", "[ERROR]", error)
         for warning in integration.warnings:
             print("*", "[WARNING]", warning)

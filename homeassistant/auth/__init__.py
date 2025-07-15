@@ -514,6 +514,7 @@ class AuthManager:
             credential,
         )
 
+    # USERNOTE: Token id could be the "ISS" claim in token
     @callback
     def async_get_refresh_token(self, token_id: str) -> models.RefreshToken | None:
         """Get refresh token by id."""
@@ -652,10 +653,12 @@ class AuthManager:
     def async_validate_access_token(self, token: str) -> models.RefreshToken | None:
         """Return refresh token if an access token is valid."""
         try:
+            # USERNOTE: Decodes the JWT header and payload without verifying the signature.
             unverif_claims = jwt_wrapper.unverified_hs256_token_decode(token)
         except jwt.InvalidTokenError:
             return None
 
+        # USERNOTE: Extract issuer from claim to look up refresh token for the user.
         refresh_token = self.async_get_refresh_token(
             cast(str, unverif_claims.get("iss"))
         )

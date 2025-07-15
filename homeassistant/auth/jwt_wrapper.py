@@ -41,6 +41,7 @@ class _PyJWSWithLoadCache(PyJWS):
 _jws = _PyJWSWithLoadCache()
 
 
+# USERNOTE: Decode payload and cache up to 16 of them.
 @lru_cache(maxsize=JWT_TOKEN_CACHE_SIZE)
 def _decode_payload(json_payload: str) -> dict[str, Any]:
     """Decode the payload from a JWS dictionary."""

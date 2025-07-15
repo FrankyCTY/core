@@ -78,6 +78,7 @@ def main() -> int:
     # We're going to first make it. If we're making an integration,
     # we will also make a config flow to go with it.
 
+    # USERNOTE: Determine if targeting a non-existing integration.
     if info.is_new:
         generate.generate("integration", info)
 

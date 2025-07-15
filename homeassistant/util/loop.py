@@ -178,6 +178,8 @@ def _dev_help_message(what: str) -> str:
     )
 
 
+# USERNOTE: It ensures the event loop is unblocked by ensuring no blocking function is called in the same thread of the event loop.
+# USERNOTE: The protection is not based on whether the function is called inside an event loop coroutine.
 def protect_loop[**_P, _R](
     func: Callable[_P, _R],
     loop_thread_id: int,
@@ -187,8 +189,10 @@ def protect_loop[**_P, _R](
 ) -> Callable[_P, _R]:
     """Protect function from running in event loop."""
 
+    # USERNOTE: Wraps the blocking function, so that when they are called inside the event loop, it will raise a RuntimeError.
     @functools.wraps(func)
     def protected_loop_func(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        # USERNOTE: Intended not to only check if the blocking function is called as a callback in the event loop, but raises if it is called in the same thread of the event loop.
         if threading.get_ident() == loop_thread_id:
             raise_for_blocking_call(
                 func,

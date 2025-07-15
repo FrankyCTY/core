@@ -92,7 +92,7 @@ async def test_cost_sensor_no_states(
     }
     await setup_integration(hass)
     # pylint: disable-next=fixme
-    # TODO: No states, should the cost entity refuse to setup?
+    # USERNOTE: No states, should the cost entity refuse to setup?
 
 
 async def test_cost_sensor_attributes(

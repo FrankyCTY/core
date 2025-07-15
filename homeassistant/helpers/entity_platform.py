@@ -59,6 +59,9 @@ SLOW_ADD_ENTITY_MAX_WAIT = 15  # Per Entity
 SLOW_ADD_MIN_TIMEOUT = 500
 
 PLATFORM_NOT_READY_RETRIES = 10
+# USERNOTE: Cache of the platform entities under the root domain.
+# Example: For root integration domain openai_conversation:
+# - { entity_platform: { openai_conversation: [related conversationEntity] } }
 DATA_ENTITY_PLATFORM: HassKey[dict[str, list[EntityPlatform]]] = HassKey(
     "entity_platform"
 )
@@ -80,6 +83,8 @@ class AddEntitiesCallback(Protocol):
         """Define add_entities type."""
 
 
+# USERNOTE: Protocol for the callback to add entities for a config entry.
+# See implementation in EntityComponent._async_schedule_add_entities_for_entry()
 class AddConfigEntryEntitiesCallback(Protocol):
     """Protocol type for EntityPlatform.add_entities callback."""
 
@@ -147,8 +152,11 @@ class EntityPlatform:
         """Initialize the entity platform."""
         self.hass = hass
         self.logger = logger
+        # USERNOTE: The platform domain (e.g. conversation)
         self.domain = domain
+        # USERNOTE: The root integration that the platform belongs to. (example: openai_conversation)
         self.platform_name = platform_name
+        # USERNOTE: The platform module (ex. openai_conversation.conversation module)
         self.platform = platform
         self.scan_interval = scan_interval
         self.scan_interval_seconds = scan_interval.total_seconds()
@@ -331,6 +339,7 @@ class EntityPlatform:
             self._async_cancel_retry_setup()
             self._async_cancel_retry_setup = None
 
+    # USERNOTE: Setup the platform from a config entry, could be from the config forwarding flow.
     async def async_setup_entry(self, config_entry: config_entries.ConfigEntry) -> bool:
         """Set up the platform from a config entry."""
         # Store it so that we can save config entry ID in entity registry
@@ -342,12 +351,20 @@ class EntityPlatform:
             """Get task to set up platform."""
             config_entries.current_entry.set(config_entry)
 
+            # USERNOTE: Execute async_setup_entry() from the platform module.
+            # Example: openai_conversation.conversation.async_setup_entry()
             return platform.async_setup_entry(  # type: ignore[union-attr]
                 self.hass, config_entry, self._async_schedule_add_entities_for_entry
             )
 
+        # USERNOTE: Set up the platform.
+        # - Load translations for the platform.
+        # - Execute async_create_setup_awaitable callback, likely invoking async_setup_entry() from the platform module.
         return await self._async_setup_platform(async_create_setup_awaitable)
 
+    # USERNOTE: Set up the platform
+    # - Load translations for the platform.
+    # - Execute async_create_setup_awaitable callback, likely invoking async_setup_entry() from the platform module.
     async def _async_setup_platform(
         self,
         async_create_setup_awaitable: Callable[[], Awaitable[None]],
@@ -357,11 +374,16 @@ class EntityPlatform:
 
         async_create_setup_awaitable creates an awaitable that sets up platform.
         """
+        # USERNOTE: Simplify to reduce pass through of the entity platform in the flow.
+        # - Make use of contextvar for coroutine local storage to share data across coroutines chain.
         current_platform.set(self)
         logger = self.logger
         hass = self.hass
         full_name = f"{self.platform_name}.{self.domain}"
 
+        # USERNOTE: Load translations for the platform.
+        # - Load from the platform domain (e.g. conversation)
+        # - Load from the root integration that the platform belongs to (e.g. openai_conversation)
         await self.async_load_translations()
 
         logger.info("Setting up %s", full_name)
@@ -379,6 +401,8 @@ class EntityPlatform:
                 awaitable = create_eager_task(awaitable, loop=hass.loop)
 
             async with hass.timeout.async_timeout(SLOW_SETUP_MAX_WAIT, self.domain):
+                # USERNOTE: Shield the awaitable from being cancelled, here prevent it from being cancelled by the timeout.
+                # This ensures awaitable is not canceled by the timeout itself (timeout will raise, but awaitable continues in background)
                 await asyncio.shield(awaitable)
 
             # Block till all entities are done
@@ -473,6 +497,9 @@ class EntityPlatform:
             )
         return {}
 
+    # USERNOTE: Load translations for the platform.
+    # - Load from the platform domain (e.g. conversation)
+    # - Load from the root integration that the platform belongs to (e.g. openai_conversation)
     async def async_load_translations(self) -> None:
         """Load translations."""
         hass = self.hass
@@ -537,15 +564,20 @@ class EntityPlatform:
         if not self._setup_complete:
             self._tasks.append(task)
 
+    # USERNOTE: Implementation of the protocol AddConfigEntryEntitiesCallback which for the callback to add entities for a config entry.
+    # Where is it called? In the platform modules' async_setup_entry() when adding entities for the platform.
+    # Example: openai_conversation.conversation.async_setup_entry() invokes this callback to add OpenAIConversationEntity.
     @callback
     def _async_schedule_add_entities_for_entry(
         self,
+        # USERNOTE: The entities to add for the platform. (e.g. OpenAIConversationEntity for openai_conversation.conversation platform)
         new_entities: Iterable[Entity],
         update_before_add: bool = False,
         *,
         config_subentry_id: str | None = None,
     ) -> None:
         """Schedule adding entities for a single platform async and track the task."""
+        # USERNOTE: Ensure the config entry is set.
         assert self.config_entry
         entities: list[Entity] = (
             new_entities if type(new_entities) is list else list(new_entities)
@@ -553,6 +585,9 @@ class EntityPlatform:
         # handle empty list from component/platform
         if not entities:
             return
+        
+        # USERNOTE: Schedule task that is tracked by HASS tracking system into the event loop.
+        # This callback will adding the entities into the entity registry.
         task = self.config_entry.async_create_task(
             self.hass,
             self.async_add_entities(
@@ -583,6 +618,7 @@ class EntityPlatform:
             self.hass.loop,
         ).result()
 
+    # USERNOTE: Upsert enities into a singleton entity registry.
     async def _async_add_and_update_entities(
         self,
         entities: list[Entity],
@@ -673,6 +709,7 @@ class EntityPlatform:
                 timeout,
             )
 
+    # USERNOTE: Add entities into a singleton entity registry.
     async def async_add_entities(
         self,
         new_entities: Iterable[Entity],
@@ -695,6 +732,7 @@ class EntityPlatform:
                 f"entry {self.config_entry.entry_id if self.config_entry else None}"
             )
 
+        # USERNOTE: Ensure the entities are a list.
         entities: list[Entity] = (
             new_entities if type(new_entities) is list else list(new_entities)
         )
@@ -785,6 +823,7 @@ class EntityPlatform:
         # also for disabled entities.
         if update_before_add:
             try:
+                # USERNOTE: Process 'update' or 'async_update' from entity
                 await entity.async_device_update(warning=False)
             except Exception:
                 self.logger.exception("%s: Error on device update!", self.platform_name)

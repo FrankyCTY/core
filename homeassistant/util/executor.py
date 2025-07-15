@@ -60,6 +60,8 @@ def join_or_interrupt_threads(
     return joined
 
 
+# USERNOTE: Wrap on top of ThreadPoolExecutor to implement timeout using time bound and attempt counter mechanism.
+# Also try to wait for all threads to finish before shutting down, otherwise forcefully stop them using async_raise.
 class InterruptibleThreadPoolExecutor(ThreadPoolExecutor):
     """A ThreadPoolExecutor instance that will not deadlock on shutdown."""
 

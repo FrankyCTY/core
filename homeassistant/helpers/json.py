@@ -93,6 +93,7 @@ if TYPE_CHECKING:
         """Dump json bytes."""
 
 else:
+    # USERNOTE: OPT_NON_STR_KEYS - Allow non-string dictionary keys, which are normally disallowed by default JSON specs (RFC 8259) ({1: "one"})
     json_bytes = partial(
         orjson.dumps, option=orjson.OPT_NON_STR_KEYS, default=json_encoder_default
     )

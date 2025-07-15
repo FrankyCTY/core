@@ -168,6 +168,8 @@ async def process_wrong_login(request: Request) -> None:
         )
 
 
+# USERNOTE: Reset the login failure counter for the client’s IP address.
+# NOTE: Once banned, the IP remains in the ip_bans.yaml file and must be manually removed.
 @callback
 def process_success_login(request: Request) -> None:
     """Process a success login attempt.
@@ -177,12 +179,17 @@ def process_success_login(request: Request) -> None:
     manual modify ip bans config file.
     """
     app = request.app
+    # USERNOTE: Exit as for security, we want KEY_BAN_MANAGER to be ready.
     # Check if ban middleware is loaded
     if KEY_BAN_MANAGER not in app or app[KEY_LOGIN_THRESHOLD] < 1:
         return
 
+    # USERNOTE: Gets the client’s IP address
     remote_addr = ip_address(request.remote)  # type: ignore[arg-type]
+    # USERNOTE: Gets the failed login counter map from the aiohttp app.
+    # USERNOTE: - Type: [defaultdict[IPv4Address | IPv6Address, int]
     login_attempt_history = app[KEY_FAILED_LOGIN_ATTEMPTS]
+    # USERNOTE: Reset failed login attempts counter for remote IP address, if it has attempt at least one previously.
     if remote_addr in login_attempt_history and login_attempt_history[remote_addr] > 0:
         _LOGGER.debug(
             "Login success, reset failed login attempts counter from %s", remote_addr

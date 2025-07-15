@@ -33,6 +33,9 @@ from . import (
     requirements,
 )
 
+# USERNOTE: Eager imports: They're explicitly importing modules early during app startup — even though they don't append to be user in that file — to avoid deferred imports later, which might:
+# - Block the event loop (very bad in async applications).
+# - Cause import storms (aka a “thundering herd”) when multiple handlers lazily import the same modules simultaneously.
 # Pre-import frontend deps which have no requirements here to avoid
 # loading them at run time and blocking the event loop. We do this ahead
 # of time so that we do not have to flag frontend deps with `import_executor`
@@ -273,14 +276,17 @@ PRELOAD_STORAGE = [
 ]
 
 
+# USERNOTE: Bootstrap hass core object using runtime config.
 async def async_setup_hass(
     runtime_config: RuntimeConfig,
 ) -> core.HomeAssistant | None:
     """Set up Home Assistant."""
 
+    # USERNOTE: Instantiate the hass core object using runtime config.
     async def create_hass() -> core.HomeAssistant:
         """Create the hass object and do basic setup."""
         hass = core.HomeAssistant(runtime_config.config_dir)
+        # USERNOTE: Import the config/custom_components/ folder first.
         loader.async_setup(hass)
 
         await async_enable_logging(
@@ -307,21 +313,25 @@ async def async_setup_hass(
             "Skipping pip installation of required modules. This may cause issues"
         )
 
+    # USERNOTE: Ensure config/configuration.yaml file exists, otherwise a default one will be created.
     if not await conf_util.async_ensure_config_exists(hass):
         _LOGGER.error("Error getting configuration path")
         return None
 
     _LOGGER.info("Config directory: %s", runtime_config.config_dir)
 
+    # USERNOTE: Raises a RuntimeError if a blocking function is called in the same thread of the event loop.
     block_async_io.enable()
 
     if not (recovery_mode := runtime_config.recovery_mode):
         config_dict = None
         basic_setup_success = False
 
+        # USERNOTE: Detect config (config/configuration.yaml) migration needs and process the configuration upgrade.
         await hass.async_add_executor_job(conf_util.process_ha_config_upgrade, hass)
 
         try:
+            # USERNOTE: Ensures the valid config dictionary is ready to be used.
             config_dict = await conf_util.async_hass_config_yaml(hass)
         except HomeAssistantError as err:
             _LOGGER.error(
@@ -330,15 +340,18 @@ async def async_setup_hass(
             )
         else:
             if not is_virtual_env():
+                # USERNOTE: Ensures we have a directory to import third-party libraries from when running in a non-virtual environment.
                 await async_mount_local_lib_path(runtime_config.config_dir)
 
             if hass.config.safe_mode:
                 _LOGGER.info("Starting in safe mode")
 
             basic_setup_success = (
+                # USERNOTE: Set up based on the config dictionary that is from the config/configuration.yaml file.
                 await async_from_config_dict(config_dict, hass) is not None
             )
 
+        # USERNOTE: Restart with recovery mode if config dict is not prepared.
         if config_dict is None:
             recovery_mode = True
             await hass.async_stop(force=True)
@@ -352,6 +365,8 @@ async def async_setup_hass(
             await hass.async_stop(force=True)
             hass = await create_hass()
 
+        # USERNOTE: If frontend integration is not loaded, activate recovery mode and restart
+        # USERNOTE: Can reuse some hass config as config is loaded just missing integration?
         elif any(
             domain not in hass.config.components for domain in CRITICAL_INTEGRATIONS
         ):
@@ -435,6 +450,7 @@ async def async_load_base_functionality(hass: core.HomeAssistant) -> None:
     """Load the registries and modules that will do blocking I/O."""
     if DATA_REGISTRIES_LOADED in hass.data:
         return
+    # USERNOTE: Add a flag to indicate the registries are loaded.
     hass.data[DATA_REGISTRIES_LOADED] = None
     entity.async_setup(hass)
     frame.async_setup(hass)
@@ -459,6 +475,7 @@ async def async_load_base_functionality(hass: core.HomeAssistant) -> None:
     )
 
 
+# USERNOTE: Set up integrations/components e.g.
 async def async_from_config_dict(
     config: ConfigType, hass: core.HomeAssistant
 ) -> core.HomeAssistant | None:
@@ -469,15 +486,23 @@ async def async_from_config_dict(
     """
     start = monotonic()
 
+    # USERNOTE: Instantiate config entries and corresponding components.
+    # USERNOTE: The actual set up is done in async_load_base_functionality().
     hass.config_entries = config_entries.ConfigEntries(hass, config)
     # Prime custom component cache early so we know if registry entries are tied
     # to a custom integration
+    # USERNOTE: Loads custom integrations into hass data cache if not already loaded.
     await loader.async_get_custom_components(hass)
+    # USERNOTE: Set up base functionalities:
+    # - Registries (e.g. device, entity)
+    # - Config entries class e.g.
     await async_load_base_functionality(hass)
 
     # Set up core.
     _LOGGER.debug("Setting up %s", CORE_INTEGRATIONS)
 
+    # USERNOTE: Set up the MUST LOAD CORE INTEGRATIONS.
+    # USERNOTE: Will call async_setup() / setup() of integrations
     if not all(
         await asyncio.gather(
             *(
@@ -495,9 +520,11 @@ async def async_from_config_dict(
 
     _LOGGER.debug("Home Assistant core initialized")
 
+    # USERNOTE: Uses homeassistant section (key) from config dictionary to set up.
     core_config = config.get(core.DOMAIN, {})
 
     try:
+        # USERNOTE: Process the [homeassistant] section from the configuration to ensure things like timezone, latitude, longitude, etc. are set up.
         await async_process_ha_core_config(hass, core_config)
     except vol.Invalid as config_err:
         conf_util.async_log_schema_error(config_err, core.DOMAIN, core_config, hass)
@@ -509,11 +536,15 @@ async def async_from_config_dict(
         )
         return None
 
+    # USERNOTE: Set up all integrations, initialize recorder, backup, etc.
     await _async_set_up_integrations(hass, config)
 
     stop = monotonic()
     _LOGGER.info("Home Assistant initialized in %.2fs", stop - start)
 
+    # USERNOTE: Detect deprecated Python version and report as issue to user.
+    # Checks if the running Python version is deprecated.
+    # If deprecated, warns the user and registers a frontend warning issue for them to see.
     if (
         REQUIRED_NEXT_PYTHON_HA_RELEASE
         and sys.version_info[:3] < REQUIRED_NEXT_PYTHON_VER
@@ -682,6 +713,10 @@ class _RotatingFileHandlerWithoutShouldRollOver(RotatingFileHandler):
         return False
 
 
+# USERNOTE: For when not running in a virtual environment, to ensure we have a directory to import third-party libraries from:
+# Dynamically create a local deps/ folder under your Home Assistant config directory.
+# Make Python treat that deps/ folder as a site-packages directory (where third-party libraries live).
+# Modify sys.path at runtime so Python can import packages installed there.
 async def async_mount_local_lib_path(config_dir: str) -> str:
     """Add local library to Python Path.
 
@@ -851,6 +886,7 @@ async def _async_resolve_domains_and_preload(
     return integrations_to_setup, all_integrations_to_setup
 
 
+# USERNOTE: Set up all integrations, initialize recorder, backup, etc.
 async def _async_set_up_integrations(
     hass: core.HomeAssistant, config: dict[str, Any]
 ) -> None:

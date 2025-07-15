@@ -499,9 +499,13 @@ class AuthStore:
 
         self._groups = groups
         self._users = users
+        # USERNOTE: Set up refresh tokens internal mem structure:
+        # { [token_id]: [user_id] }
         self._build_token_id_to_user_id()
         self._async_schedule_save(INITIAL_LOAD_SAVE_DELAY)
 
+    # USERNOTE: Set up refresh tokens internal mem structure:
+    # { [token_id]: [user_id] }
     @callback
     def _build_token_id_to_user_id(self) -> None:
         """Build a map of token id to user id."""

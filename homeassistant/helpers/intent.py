@@ -63,6 +63,8 @@ INTENT_GET_TEMPERATURE = "HassClimateGetTemperature"
 
 SLOT_SCHEMA = vol.Schema({}, extra=vol.ALLOW_EXTRA)
 
+# USERNOTE: Key in HASS data cache for the dict of intent handlers cache.
+# USERNOTE: Key: intent type, Value: intent handlers[].
 DATA_KEY: HassKey[dict[str, IntentHandler]] = HassKey("intent")
 
 SPEECH_TYPE_PLAIN = "plain"

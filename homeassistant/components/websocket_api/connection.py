@@ -53,6 +53,8 @@ class ActiveConnection:
         "user",
     )
 
+    # USERNOTE: This instance is intialized in auth.py during the auth phase.
+    # USERNOTE: websocket_api/http.py -> websocket_api/auth.py -> websocket_api/connection.py
     def __init__(
         self,
         logger: WebSocketAdapter,
@@ -97,6 +99,15 @@ class ActiveConnection:
         """Return a context."""
         return Context(user_id=self.user.id)
 
+    # LLM: Interface Documentation
+    # Purpose: Registers a binary message handler for the current websocket connection, allowing it to process
+    #          binary messages with a specific handler ID.
+    # Caveats & Side Effects:
+    # - Returns a tuple of (handler_id, unregister_callback)
+    # - Raises RuntimeError if too many handlers are registered (max 255)
+    # - Handler IDs are 1-based to avoid using 0 as a valid ID
+    # Role in Scope: Enables efficient binary message processing in the websocket API by providing a way to
+    #               register and manage binary message handlers per connection
     @callback
     def async_register_binary_handler(
         self, handler: BinaryHandler
@@ -105,28 +116,41 @@ class ActiveConnection:
 
         Returns a binary handler_id (1 byte) and a callback to unregister the handler.
         """
+        # LLM: Implementation Documentation
+        # Find an available slot in the binary_handlers list
+        # Strategy: First try to append to the end if under 255 handlers
+        #           If at capacity, search for a None slot to reuse
+        # USERQ: Why do we limit it to 255 handler slots?
         if len(self.binary_handlers) < 255:
+            # LLM: Add new slot at the end of the list
             index = len(self.binary_handlers)
             self.binary_handlers.append(None)
         else:
-            # Once the list is full, we search for a None entry to reuse.
+            # LLM: Search for an empty slot to reuse
+            # This allows handlers to be unregistered and their slots reused
             index = None
             for idx, existing in enumerate(self.binary_handlers):
                 if existing is None:
                     index = idx
                     break
 
+        # LLM: Error handling - prevent exceeding maximum handler count
         if index is None:
             raise RuntimeError("Too many binary handlers registered")
 
+        # LLM: Store the handler in the found slot
         self.binary_handlers[index] = handler
 
+        # LLM: Create and return unregister callback
+        # The callback clears the handler slot when called
         @callback
         def unsub() -> None:
             """Unregister the handler."""
             assert index is not None
             self.binary_handlers[index] = None
 
+        # LLM: Return handler ID (1-based) and unregister callback
+        # The +1 ensures handler IDs start at 1, avoiding 0 as a valid ID
         return index + 1, unsub
 
     @callback
@@ -163,6 +187,7 @@ class ActiveConnection:
             )
         )
 
+    # USERNOTE: This is the main handler for client sent BINARY message
     @callback
     def async_handle_binary(self, handler_id: int, payload: bytes) -> None:
         """Handle a single incoming binary message."""
@@ -183,9 +208,21 @@ class ActiveConnection:
             self.logger.exception("Error handling binary message")
             self.binary_handlers[index] = None
 
+    # LLM: Interface Documentation
+    # Purpose: Processes incoming JSON messages from the WebSocket connection, validating and routing them to appropriate handlers.
+    # Caveats & Side Effects:
+    # - Validates message format and ID sequence
+    # - Routes messages to registered handlers
+    # - Handles errors and sends appropriate responses
+    # - Maintains message ID sequence tracking
+    # Role in Scope: Core message processing for text-based WebSocket communication
     @callback
     def async_handle(self, msg: JsonValueType) -> None:
         """Handle a single incoming message."""
+        # LLM: Message Validation Phase
+        # - Validates message is a dictionary
+        # - Checks for required fields (id, type)
+        # - Validates field types and constraints
         if (
             # Not using isinstance as we don't care about children
             # as these are always coming from JSON
@@ -209,6 +246,9 @@ class ActiveConnection:
             )
             return
 
+        # LLM: Message ID Sequence Validation
+        # - Ensures message IDs are strictly increasing
+        # - Prevents message replay and out-of-order processing
         if cur_id <= self.last_id:
             self.send_message(
                 messages.error_message(
@@ -217,6 +257,9 @@ class ActiveConnection:
             )
             return
 
+        # LLM: Handler Lookup Phase
+        # - Looks up handler based on message type
+        # - Returns error if no handler is registered
         if not (handler_schema := self.handlers.get(type_)):
             self.logger.info("Received unknown command: %s", type_)
             self.send_message(
@@ -226,18 +269,28 @@ class ActiveConnection:
             )
             return
 
+        # USERNOTE: SELECT HANDLER based on type field from msg (example: "supported_features")
         handler, schema = handler_schema
 
         try:
             if schema is False:
+                # LLM: No Schema Validation
+                # - For handlers that don't require schema validation
+                # # USERNOTE: We expect only 2 fields in json. Only allows id and type fields
                 if len(msg) > 2:
                     raise vol.Invalid("extra keys not allowed")  # noqa: TRY301
                 handler(self.hass, self, msg)
             else:
+                # LLM: Schema Validation
+                # - Validates message against provided schema
+                # - Passes validated message to handler
                 handler(self.hass, self, schema(msg))
         except Exception as err:  # noqa: BLE001
             self.async_handle_exception(msg, err)
 
+        # LLM: State Update
+        # - Updates last processed message ID
+        # - Maintains message sequence tracking
         self.last_id = cur_id
 
     @callback

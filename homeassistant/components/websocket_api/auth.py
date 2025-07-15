@@ -30,6 +30,9 @@ TYPE_AUTH_REQUIRED: Final = "auth_required"
 AUTH_MESSAGE_SCHEMA: Final = vol.Schema(
     {
         vol.Required("type"): TYPE_AUTH,
+        # USERNOTE: Either api password or access token can be provided.
+        # USERNOTE: If both not provided, the schema still passes, which would be handle after schema check.
+        # FIXME: In the actual code, seems like api_password is not used, so only access token is expected?
         vol.Exclusive("api_password", "auth"): str,
         vol.Exclusive("access_token", "auth"): str,
     }
@@ -60,7 +63,7 @@ class AuthPhase:
     ) -> None:
         """Initialize the authenticated connection."""
         self._hass = hass
-        # send_message will send a message to the client via the queue.
+        # USERNOTE: send_message will send a message to the client via the queue. See WebSocketHandler's _send_message()
         self._send_message = send_message
         self._cancel_ws = cancel_ws
         self._logger = logger
@@ -77,12 +80,15 @@ class AuthPhase:
                 f"Auth message incorrectly formatted: {humanize_error(msg, err)}"
             )
             self._logger.warning(error_msg)
+            # USERNOTE: Validation error, send auth invalid message
             await self._send_bytes_text(auth_invalid_message(error_msg))
             raise Disconnect from err
 
+        # USERNOTE: Case 1 - Access token is provided
         if (access_token := valid_msg.get("access_token")) and (
             refresh_token := self._hass.auth.async_validate_access_token(access_token)
         ):
+            # USERNOTE: Init active connection
             conn = ActiveConnection(
                 self._logger,
                 self._hass,
@@ -90,13 +96,17 @@ class AuthPhase:
                 refresh_token.user,
                 refresh_token,
             )
+            # USERNOTE: Register to active connection subscriptions for connection close clean up.
             conn.subscriptions["auth"] = (
+                # USERNOTE: Disconnect ws token is revoked, which force client to reconnect and restart auth phase.
                 self._hass.auth.async_register_revoke_token_callback(
                     refresh_token.id, self._cancel_ws
                 )
             )
+            # USERNOTE: Sends auth ok message to client
             await self._send_bytes_text(AUTH_OK_MESSAGE)
             self._logger.debug("Auth OK")
+            # USERNOTE: Extract issuer from claim
             process_success_login(self._request)
             return conn
 

@@ -916,6 +916,7 @@ class XiaomiAirFreshT2017(XiaomiAirFreshA1):
         self._speed_range = (60, 300)
 
 
+# USERNOTE: Generic class for Xiaomi Fan devices.
 class XiaomiGenericFan(XiaomiGenericDevice):
     """Representation of a generic Xiaomi Fan."""
 
@@ -943,6 +944,9 @@ class XiaomiGenericFan(XiaomiGenericDevice):
             self._device_features = FEATURE_FLAGS_FAN_P10_P11_P18
         else:
             self._device_features = FEATURE_FLAGS_FAN
+            # USERNOTE: The supported features that these xiaomi fans shared.
+            # USERNOTE: Correlate with services.yaml of depndend fan component e.g. and work with presentations in frontend.
+            # USERNOTE: Note subclass can override the supported features!
         self._attr_supported_features = (
             FanEntityFeature.SET_SPEED
             | FanEntityFeature.OSCILLATE

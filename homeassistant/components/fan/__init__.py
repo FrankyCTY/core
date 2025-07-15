@@ -98,6 +98,7 @@ def is_on(hass: HomeAssistant, entity_id: str) -> bool:
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Expose fan control via statemachine and services."""
+    # USERNOTE: Stores entity component in hass data cache.
     component = hass.data[DATA_COMPONENT] = EntityComponent[FanEntity](
         _LOGGER, DOMAIN, hass, SCAN_INTERVAL
     )

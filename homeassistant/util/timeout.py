@@ -161,14 +161,16 @@ class _GlobalTaskContext:
         self._wait_zone: asyncio.Event = asyncio.Event()
         self._state: _State = _State.INIT
         self._cool_down: float = cool_down
+        # USERNOTE: This records the number of external cancellation requests already pending before the timeout manager starts its own monitoring.
         self._cancelling = 0
         self._cancel_message = cancel_message
 
     async def __aenter__(self) -> Self:
         self._manager.global_tasks.append(self)
+        # USERNOTE: Set up callback for timeout e.g.
         self._start_timer()
         self._state = _State.ACTIVE
-        # Remember if the task was already cancelling
+        # USERNOTE: Remember if the task was already cancelling
         # so when we __aexit__ we can decide if we should
         # raise asyncio.TimeoutError or let the cancellation propagate
         self._cancelling = self._task.cancelling()
@@ -184,18 +186,26 @@ class _GlobalTaskContext:
         self._manager.global_tasks.remove(self)
 
         # Timeout on exit
+        # USERNOTE: Only when this context manager has determine a timeout in `_on_timeout`.
         if exc_type is asyncio.CancelledError and self.state is _State.TIMEOUT:
             # The timeout was hit, and the task was cancelled
             # so we need to uncancel the task since the cancellation
             # should not leak out of the context manager
+            # USERNOTE: Prevent the asyncio.CancelledError from propagating out of the context manager as we want to customize the time out handling.
+            # USERNOTE: If after decrementing 1 cancel request, still have more than the snapshot external cancel requests, it means SOMETHING is cancelling the task, likely caused by external.
+            # USERNOTE: This means the cancellation was caused externally and this manager should not handle it as the external would have handled it.
             if self._task.uncancel() > self._cancelling:
                 # If the task was already cancelling don't raise
                 # asyncio.TimeoutError and instead return None
                 # to allow the cancellation to propagate
                 return None
+            # USERNOTE: Raise error as we know this context manger has rasied timeout, and then after uncancel the task, it has same or less cancel requests than the snapshot, it means the context manager is the one that raised the timeout, not caused by external.
             raise TimeoutError
 
+        # USERNOTE: Exit peacefully without timeout, update wait zone flag as the corresponding zones are done at this point.
         self._state = _State.EXIT
+        # USERNOTE: This context has exited and itself has not timed out.
+        # USERNOTE: _on_wait coroutine is waiting for this signal, so we need to set it, which then will cancel the task.
         self._wait_zone.set()
         return None
 
@@ -213,7 +223,10 @@ class _GlobalTaskContext:
         if self._timeout_handler:
             return
 
+        # USERNOTE: The time will expire
+        # FIXME: Why not use monotonic time? Because the call_at is based on loop time, not monotonic time.
         self._expiration_time = self._loop.time() + self._time_left
+        # USERNOTE: Schedule a task to run at the expiration time.
         self._timeout_handler = self._loop.call_at(
             self._expiration_time, self._on_timeout
         )
@@ -229,6 +242,8 @@ class _GlobalTaskContext:
         assert self._expiration_time
         self._time_left = self._expiration_time - self._loop.time()
 
+    # USERNOTE: This is called when the timeout expires.
+    # Update state to TIMEOUT, which trigger different exit handling for this context manager.
     def _on_timeout(self) -> None:
         """Process timeout."""
         self._state = _State.TIMEOUT
@@ -236,8 +251,10 @@ class _GlobalTaskContext:
 
         # Reset timer if zones are running
         if not self._manager.zones_done:
+            # USERNOTE: Create a task to run the _on_wait coroutine to wait for all zones to finish.
             self._on_wait_task = asyncio.create_task(self._on_wait())
         else:
+            # USERNOTE: If all zones are done (or no zones), cancel the task.
             self._cancel_task()
 
     def _cancel_task(self) -> None:
@@ -256,11 +273,16 @@ class _GlobalTaskContext:
         """Reset timer after freeze."""
         self._start_timer()
 
+    # USERNOTE: Wait the signal from the asyncio.Event object indicate all zones are done.
+    # USERNOTE: Set scenario 1: That flag is set when the context exited without this context manager raising timeout.
+    # USERNOTE: Set scenario 2: It's also set when the last zone completes and is dropped from the timeout manager.
     async def _on_wait(self) -> None:
         """Wait until zones are done."""
         await self._wait_zone.wait()
+        # USERNOTE: Yield control back to the event loop, enabling other tasks to run.
         await asyncio.sleep(self._cool_down)  # Allow context switch
         self._on_wait_task = None
+        # USERNOTE: If this context manager has not timed out, do not cancel the task.
         if self.state != _State.TIMEOUT:
             return
         self._cancel_task()
@@ -303,6 +325,7 @@ class _ZoneTaskContext:
         # Remember if the task was already cancelling
         # so when we __aexit__ we can decide if we should
         # raise asyncio.TimeoutError or let the cancellation propagate
+        # USERNOTE: This records the number of external cancellation requests already pending before the timeout manager starts its own monitoring.
         self._cancelling = self._task.cancelling()
 
         return self

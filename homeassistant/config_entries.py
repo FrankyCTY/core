@@ -123,6 +123,7 @@ SOURCE_REAUTH = "reauth"
 # This is used to initiate a reconfigure flow by the user.
 SOURCE_RECONFIGURE = "reconfigure"
 
+# USERNOTE: Key: Domain, Value: ConfigFlow class/subclass
 HANDLERS: Registry[str, type[ConfigFlow]] = Registry()
 
 STORAGE_KEY = "core.config_entries"
@@ -376,7 +377,13 @@ class ConfigEntry[_DataT = Any]:
     domain: str
     title: str
     data: MappingProxyType[str, Any]
+    # USERNOTE: Store per-config-entry runtime state.
+    # For integration to store config entry specific runtime data in memory.
     runtime_data: _DataT
+    # USERNOTE: Configured via Options Flow
+    # USERNOTE: An Options Flow is a user interface-driven setup wizard (flow) that allows editing runtime configuration options of an integration after it has been installed.
+    # https://developers.home-assistant.io/docs/config_entries_options_flow_handler
+    # USERNOTE: See async_get_options_flow() in config_flow.py
     options: MappingProxyType[str, Any]
     subentries: MappingProxyType[str, ConfigSubentry]
     unique_id: str | None
@@ -401,8 +408,10 @@ class ConfigEntry[_DataT = Any]:
     _on_state_change: list[CALLBACK_TYPE] | None
     setup_lock: asyncio.Lock
     _reauth_lock: asyncio.Lock
+    # USERNOTE: The tasks to track the config entry related task such as task that adding entities into the entity registry.
     _tasks: set[asyncio.Future[Any]]
     _background_tasks: set[asyncio.Future[Any]]
+    # USERNOTE: The integration instance of the domain of the config entry. (e.g. openai_conversation integration)
     _integration_for_domain: loader.Integration | None
     _tries: int
     created_at: datetime
@@ -606,6 +615,7 @@ class ConfigEntry[_DataT = Any]:
             )
         return self._supported_subentry_types or {}
 
+    # USERNOTE: Clear in memory cache of the config entry's state.
     def clear_state_cache(self) -> None:
         """Clear cached properties that are included in as_json_fragment."""
         self.__dict__.pop("as_json_fragment", None)
@@ -645,6 +655,12 @@ class ConfigEntry[_DataT = Any]:
         """Return a storage fragment for this entry."""
         return json_fragment(json_bytes_sorted(self.as_dict()))
 
+    # USERNOTE: Set up a config entry by invoking integration's async_setup_entry()
+    # USERNOTE: CONDITION: If it is NOT a platform-forwarded entry, then:
+    # - Update the config entry runtime state to track the set up progress.
+    # - Load the config flow platform.
+    # - Migrate the config entry if necessary.
+    # - Invoke integration's async_setup_entry() which is defined in the integration's __init__.py file.
     async def async_setup(
         self,
         hass: HomeAssistant,
@@ -652,27 +668,48 @@ class ConfigEntry[_DataT = Any]:
         integration: loader.Integration | None = None,
     ) -> None:
         """Set up an entry."""
+        # USERNOTE: Skip this entry set up as the user has requested to hide this discovery from UI. Skip any other config to it.
         if self.source == SOURCE_IGNORE or self.disabled_by:
             return
 
+        # USERNOTE: Set this config entry as the current context for the running coroutine.
+        # This allows downstream code (e.g., platform loading or error reporting) to access
+        # the active entry being set up without explicitly passing it around.
+        # Note: `current_entry` is a coroutine-local contextvar, not thread-local.
         current_entry.set(self)
         try:
             await self.__async_setup_with_context(hass, integration)
         finally:
             current_entry.set(None)
 
+    # USERNOTE: Set up a config entry by invoking integration's async_setup_entry()
+    # USERNOTE: CONDITION: If it is NOT a platform-forwarded entry, then:
+    # - Update the config entry runtime state to track the set up progress.
+    # - Load the config flow platform.
+    # - Migrate the config entry if necessary.
+    # - Invoke integration's async_setup_entry() which is defined in the integration's __init__.py file.
     async def __async_setup_with_context(
         self,
         hass: HomeAssistant,
         integration: loader.Integration | None,
     ) -> None:
         """Set up an entry, with current_entry set."""
+        # USERNOTE: Load the integration if the config entry set up request without a loaded integration.
+        # Understanding: The set up is requested without integration provided (not loaded?) but the config entry to be set up is linked to an integration.
         if integration is None and not (integration := self._integration_for_domain):
+            # USERNOTE: Tries to retrieve integrations from:
+            # - HASS data cache (built-in integrations)
+            # - Custom components (custom integrations)
+            # - Directory (components)
             integration = await loader.async_get_integration(hass, self.domain)
+            # USERNOTE: Update config entry obj's integration.
             self._integration_for_domain = integration
 
         # Only store setup result as state if it was not forwarded.
+        # USERNOTE: Update config entry runtime state if the config entry's domain is directly referring to the integration's domain.
+        # USERNOTE: No need to update the runtime state if it is a platform-forwarded entry that forward from another integration.
         if domain_is_integration := self.domain == integration.domain:
+            # USERNOTE: If the config entry is already loaded or in progress, raise an exception.
             if self.state in (
                 ConfigEntryState.LOADED,
                 ConfigEntryState.SETUP_IN_PROGRESS,
@@ -682,21 +719,27 @@ class ConfigEntry[_DataT = Any]:
                     f" {self.entry_id} cannot be set up because it is already loaded "
                     f"in the {self.state} state"
                 )
+            # USERNOTE: Expecting the asyncio lock is locked at this stage from `async_setup_locked()`
             if not self.setup_lock.locked():
                 raise OperationNotAllowed(
                     f"The config entry {self.title} ({self.domain}) with entry_id"
                     f" {self.entry_id} cannot be set up because it does not hold "
                     "the setup lock"
                 )
+            # USERNOTE: Update the runtime state of the config entry to SETUP_IN_PROGRESS.
             self._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
 
+        # USERNOTE: Test if the integration supports unload, and update the boolean flag.
         if self.supports_unload is None:
             self.supports_unload = await support_entry_unload(hass, self.domain)
+        # USERNOTE: Test if the integration supports remove device, and update the boolean flag.
         if self.supports_remove_device is None:
             self.supports_remove_device = await support_remove_from_device(
                 hass, self.domain
             )
         try:
+            # USERNOTE: Get integration that has implemented component protocol from the hass cache.
+            # If not already in cache, then we load the integration module and cast it to ComponentProtocol, and the CACHE it into the hass cache via executor or synchronous loading.
             component = await integration.async_get_component()
         except ImportError as err:
             _LOGGER.error(
@@ -711,6 +754,7 @@ class ConfigEntry[_DataT = Any]:
                 )
             return
 
+        # USERNOTE: Load the config flow platform if the config entry's domain is directly referring to the integration's domain (NOT a platform-forwarded entry).
         if domain_is_integration:
             try:
                 await integration.async_get_platform("config_flow")
@@ -746,6 +790,7 @@ class ConfigEntry[_DataT = Any]:
             with async_start_setup(
                 hass, integration=self.domain, group=self.entry_id, phase=setup_phase
             ):
+                # USERNOTE: Invoke integration's async_setup_entry() which is defined in the integration's __init__.py file.
                 result = await component.async_setup_entry(hass, self)
 
             if not isinstance(result, bool):
@@ -840,6 +885,7 @@ class ConfigEntry[_DataT = Any]:
         # Otherwise we risk that any `call_soon`s
         # created by an integration will be executed before the state is set.
         #
+        # USERNOTE: Explaination on above comment: It is because we want to ensure the atomicity of the config entry set up, as if we use await, it suspends the current coroutine, and the main thread might execute call_soon's coroutines which causes race condition.
 
         # Only store setup result as state if it was not forwarded.
         if not domain_is_integration:
@@ -879,6 +925,7 @@ class ConfigEntry[_DataT = Any]:
         self, hass: HomeAssistant, integration: loader.Integration | None = None
     ) -> None:
         """Set up while holding the setup lock."""
+        # USERNOTE: Lock this config entry instance to ensure it can not be set up again while it is being set up.
         async with self.setup_lock:
             if self.state is ConfigEntryState.LOADED:
                 # If something loaded the config entry while
@@ -1029,6 +1076,7 @@ class ConfigEntry[_DataT = Any]:
             # Restore modified_at
             object.__setattr__(self, "modified_at", old_modified_at)
 
+    # USERNOTE: Updates the runtime state of the config entry that is transient and in memory only, then notify via disaptcher, and also invoke the internal registered callbacks.
     @callback
     def _async_set_state(
         self,
@@ -1039,8 +1087,10 @@ class ConfigEntry[_DataT = Any]:
         error_reason_translation_placeholders: dict[str, str] | None = None,
     ) -> None:
         """Set the state of the config entry."""
+        # USERNOTE: Reset the tries if the state is not in NO_RESET_TRIES_STATES (ConfigEntryState.SETUP_RETRY, ConfigEntryState.SETUP_IN_PROGRESS)
         if state not in NO_RESET_TRIES_STATES:
             self._tries = 0
+        # USERNOTE: Update the state of the config entry by setting related attributes.
         _setter = object.__setattr__
         _setter(self, "state", state)
         _setter(self, "reason", reason)
@@ -1050,16 +1100,21 @@ class ConfigEntry[_DataT = Any]:
             "error_reason_translation_placeholders",
             error_reason_translation_placeholders,
         )
+        # USERNOTE: Clear the in memory cache of the config entry's state.
         self.clear_state_cache()
+        # USERNOTE: Not clearing storage cache, as the state change is not persisted to storage anyway, so no point for unnecessary storage clean up.
         # Storage cache is not cleared here because the state is not stored
         # in storage and we do not want to clear the cache on every state change
         # since state changes are frequent.
+        # USERNOTE: Send the state change event to the dispatcher.
         async_dispatcher_send_internal(
             hass, SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntryChange.UPDATED, self
         )
 
+        # USERNOTE: Invoke registered callbacks that are listening to the state change event.
         self._async_process_on_state_change()
 
+    # USERNOTE: Migrate a config entry if necessary.
     async def async_migrate(self, hass: HomeAssistant) -> bool:
         """Migrate an entry.
 
@@ -1110,6 +1165,7 @@ class ConfigEntry[_DataT = Any]:
             return False
         return result
 
+    # USERNOTE: Register callback to be called when config entry is updated.
     def add_update_listener(self, listener: UpdateListenerType) -> CALLBACK_TYPE:
         """Listen for when entry is updated.
 
@@ -1139,6 +1195,7 @@ class ConfigEntry[_DataT = Any]:
             "version": self.version,
         }
 
+    # USERNOTE: Register callback to be called when config entry is unloaded.
     @callback
     def async_on_unload(
         self, func: Callable[[], Coroutine[Any, Any, None] | None]
@@ -1148,9 +1205,14 @@ class ConfigEntry[_DataT = Any]:
             self._on_unload = []
         self._on_unload.append(func)
 
+    # USERNOTE: Handle unload request.
+    # - Process the on_unload callbacks
+    # - Cancel pending background tasks
+    # - Wait for `_tasks` & cancelling background tasks to complete with 10s timout.
     async def _async_process_on_unload(self, hass: HomeAssistant) -> None:
         """Process the on_unload callbacks and wait for pending tasks."""
         if self._on_unload is not None:
+            # USERNOTE: Create task to eager start for each registered unload callbacks.
             while self._on_unload:
                 if job := self._on_unload.pop()():
                     self.async_create_task(hass, job, eager_start=True)
@@ -1228,6 +1290,7 @@ class ConfigEntry[_DataT = Any]:
             ):
                 # Reauth or Reconfigure flow already in progress for this entry
                 return
+            # USERNOTE: Initialize the reauth flow via ConfigEntriesFlowManager.
             result = await hass.config_entries.flow.async_init(
                 self.domain,
                 context=ConfigFlowContext(
@@ -1271,6 +1334,7 @@ class ConfigEntry[_DataT = Any]:
             if flow["context"].get("source") in sources
         )
 
+    # USERNOTE: API for creating task and integrate into HASS tracking system.
     @callback
     def async_create_task[_R](
         self,
@@ -1406,6 +1470,7 @@ class ConfigEntriesFlowManager(
                 breaks_in_ha_version="2025.12",
             )
 
+        # USERNOTE: Generate a unique ID for the flow to represent the init flow.
         flow_id = ulid_util.ulid_now()
 
         # Avoid starting a config flow on an integration that only supports
@@ -1899,6 +1964,7 @@ class ConfigEntryItems(UserDict[str, ConfigEntry]):
         return entries[0]
 
 
+# USERNOTE: Specific store of core.config_entries file, will load it's file into memory.
 class ConfigEntryStore(storage.Store[dict[str, list[dict[str, Any]]]]):
     """Class to help storing config entry data."""
 
@@ -2029,6 +2095,7 @@ class ConfigEntries:
                 return True
         return False
 
+    # USERNOTE: Return all entries or entries for a specific domain.
     @callback
     def async_entries(
         self,
@@ -2139,10 +2206,12 @@ class ConfigEntries:
             entry.async_shutdown()
         self.flow.async_shutdown()
 
+    # USERNOTE: Initialize config entry config.
     async def async_initialize(self) -> None:
         """Initialize config entry config."""
         config = await self._store.async_load()
 
+        # USERNOTE: Register the one time listener to the event bus, will be added to the internal listeners dict to clean up all entries.
         self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self._async_shutdown)
 
         if config is None:
@@ -2181,6 +2250,7 @@ class ConfigEntries:
         self._entries = entries
         self.async_update_issues()
 
+    # USERNOTE: Set up a config entry that has state NOT_LOADED.
     async def async_setup(self, entry_id: str, _lock: bool = True) -> bool:
         """Set up a config entry.
 
@@ -2197,13 +2267,16 @@ class ConfigEntries:
 
         # Setup Component if not set up yet
         if entry.domain in self.hass.config.components:
+            # USERNOTE: Use asyncio lock if _lock is True.
             if _lock:
                 async with entry.setup_lock:
+                    # USERNOTE: Set up config entry
                     await entry.async_setup(self.hass)
             else:
                 await entry.async_setup(self.hass)
         else:
             # Setting up the component will set up all its config entries
+            # USERNOTE: Set up the integration for HA core.
             result = await async_setup_component(
                 self.hass, entry.domain, self._hass_config
             )
@@ -2549,6 +2622,8 @@ class ConfigEntries:
             self.hass, SIGNAL_CONFIG_ENTRY_CHANGED, change_type, entry
         )
 
+    # USERNOTE: - Load platform modules into DATA_COMPONENTS (components) in memory cache
+    # USERNOTE: - Ensure the platform's root integrations (e.g. conversation) are loaded into DATA_INTEGRATIONS cache.
     async def async_forward_entry_setups(
         self, entry: ConfigEntry, platforms: Iterable[Platform | str]
     ) -> None:
@@ -2563,13 +2638,26 @@ class ConfigEntries:
         it can load multiple platforms at once and does not require a separate
         import executor job for each platform.
         """
+        # USERNOTE: Load/Retrieve integration by entry domain. (e.g. opena_conversation integration)
         integration = await loader.async_get_integration(self.hass, entry.domain)
+
+        # LLM: Ensure platform modules are imported before proceeding with setup
+        # This prevents import delays during entity creation and avoids blocking the event loop
         if not integration.platforms_are_loaded(platforms):
+            # LLM: Pause setup phase tracking to indicate we're waiting for platform imports
+            # This helps with startup timing analysis and prevents misleading setup duration metrics
             with async_pause_setup(self.hass, SetupPhases.WAIT_IMPORT_PLATFORMS):
+                # USERNOTE: Load all the platforms of the config entry referencing integration.
                 await integration.async_get_platforms(platforms)
 
+        # LLM: Handle setup locking to prevent concurrent modification of config entry state
+        # The lock ensures platform setup doesn't conflict with entry unloading or state changes
         if not entry.setup_lock.locked():
+            # LLM: Acquire setup lock and validate entry is in correct state for platform setup
+            # This prevents platform setup when entry is being unloaded or in error state
             async with entry.setup_lock:
+                # LLM: Verify entry is loaded before forwarding to platforms
+                # Platform setup requires the main entry to be successfully initialized first
                 if entry.state is not ConfigEntryState.LOADED:
                     raise OperationNotAllowed(
                         f"The config entry '{entry.title}' ({entry.domain}) with "
@@ -2577,16 +2665,29 @@ class ConfigEntries:
                         f"{platforms} because it is in state {entry.state}, but needs "
                         f"to be in the {ConfigEntryState.LOADED} state"
                     )
+                # LLM: Execute platform setup while holding the lock to ensure atomicity
+                # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+                # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
                 await self._async_forward_entry_setups_locked(entry, platforms)
         else:
+            # LLM: Lock is already held (likely by the same task), proceed with setup
+            # This handles the case where platform setup is called from within entry setup
+            # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+            # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
             await self._async_forward_entry_setups_locked(entry, platforms)
+
             # If the lock was held when we stated, and it was released during
             # the platform setup, it means they did not await the setup call.
+            # LLM: Detect if lock was released during platform setup without awaiting
+            # This indicates the integration didn't properly await the setup call, which can cause race conditions
             if not entry.setup_lock.locked():
+                # LLM: Report usage violation to help developers identify problematic integration code
                 _report_non_awaited_platform_forwards(
                     entry, "async_forward_entry_setups"
                 )
 
+    # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+    # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
     async def _async_forward_entry_setups_locked(
         self, entry: ConfigEntry, platforms: Iterable[Platform | str]
     ) -> None:
@@ -2604,6 +2705,8 @@ class ConfigEntries:
             )
         )
 
+    # USERNOTE: Perform forward entry setups to forward config entry to the integration's platforms using the same config entry.
+    # USERNOTE: Essentally just use the main integration's config entry to set up the platform's domain integration.
     async def _async_forward_entry_setup(
         self,
         entry: ConfigEntry,
@@ -2612,6 +2715,8 @@ class ConfigEntries:
     ) -> bool:
         """Forward the setup of an entry to a different component."""
         # Setup Component if not set up yet
+        # USERNOTE: Ensure the platform domain we want to forward to another component is set up, if not, we will set it up now.
+        # USERNOTE: The platform name is the domain name of the platform. (e.g. conersation, light)
         if domain not in self.hass.config.components:
             with async_pause_setup(self.hass, SetupPhases.WAIT_BASE_PLATFORM_SETUP):
                 result = await async_setup_component(
@@ -2625,12 +2730,23 @@ class ConfigEntries:
             # If this is a late setup, we need to make sure the platform is loaded
             # so we do not end up waiting for when the EntityComponent calls
             # async_prepare_setup_platform
+            # USERNOTE: Ensure the main integration that originally created the ConfigEntry is set up (preloaded).
+            # Example: openai_conversation integration
             integration = await loader.async_get_integration(self.hass, entry.domain)
+            # USERNOTE: Then ensure the platforms of the main integration is loaded as modules into memory.
             if not integration.platforms_are_loaded((domain,)):
                 with async_pause_setup(self.hass, SetupPhases.WAIT_IMPORT_PLATFORMS):
+                    # USERNOTE: Load platforms for an integration from the target integration's directory into Hass in memory data cache (DATA_COMPONENTS cache).
+                    # Example: Load platforms of openai_conversation such as conversation.py of the openai_conversation integration.
                     await integration.async_get_platform(domain)
 
+        # USERNOTE: Retrieve the "platform integration" from cache that we expect to be already loaded at this point.
+        # USERNOTE: Load from DATA_INTEGRATIONS cache
         integration = loader.async_get_loaded_integration(self.hass, domain)
+        # USERNOTE: This perform the so called "forward" process.
+        # Essentally just use the main integration's config entry to set up the platform's domain integration.
+        # - Entry: Still the main integration's config entry.
+        # - Integration: From this point will be the platform's domain integration.
         await entry.async_setup(self.hass, integration=integration)
         return True
 
@@ -3738,12 +3854,14 @@ async def _load_integration(
         raise data_entry_flow.UnknownHandler from err
 
 
+# USERNOTE: Get the flow handler (Subclass of ConfigFlow)
 async def _async_get_flow_handler(
     hass: HomeAssistant, domain: str, hass_config: ConfigType
 ) -> type[ConfigFlow]:
     """Get a flow handler for specified domain."""
 
     # First check if there is a handler registered for the domain
+    # USERNOTE: Returns the registered ConfigFlow subclass for that domain.
     if loader.is_component_module_loaded(hass, f"{domain}.config_flow") and (
         handler := HANDLERS.get(domain)
     ):

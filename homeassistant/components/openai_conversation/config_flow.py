@@ -74,6 +74,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# LLM: Schema for initial user setup requiring only the OpenAI API key
+# This minimal schema keeps the initial setup simple while allowing advanced configuration later
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_API_KEY): str,
@@ -81,15 +83,21 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
+# LLM: Validates OpenAI API credentials by attempting to connect and list available models
+# Purpose: Ensures the provided API key can authenticate with OpenAI before saving the configuration
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
+    # LLM: Create OpenAI client with user's API key using Home Assistant's HTTP client for proxy support
     client = openai.AsyncOpenAI(
         api_key=data[CONF_API_KEY], http_client=get_async_client(hass)
     )
-    await hass.async_add_executor_job(client.with_options(timeout=10.0).models.list)
+    # LLM: Test API connectivity by listing models with a 10-second timeout
+    # This is a lightweight operation that validates both authentication and network connectivity
+    # FIXME: There seems to bug where the openai_sdk models.list is not throwing error on invalid API key.
+    return await hass.async_add_executor_job(client.with_options(timeout=10.0).models.list)
 
 
 class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -98,10 +106,15 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 2
     MINOR_VERSION = 3
 
+    # LLM: Handles the initial setup step where users provide their OpenAI API key
+    # This collects and validates API credentials, creates integration entry on success
+    # It returns form on first visit, validates and creates entry on submission
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle the initial step."""
+        # LLM: On first visit, display the API key input form to the user
+        # USERNOTE: This gather user input to create the config entry.
         if user_input is None:
             return self.async_show_form(
                 step_id="user", data_schema=STEP_USER_DATA_SCHEMA
@@ -120,6 +133,8 @@ class OpenAIConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.exception("Unexpected exception")
             errors["base"] = "unknown"
         else:
+            # LLM: Validation successful - create the integration entry with recommended default options
+            # This completes the initial setup and makes the integration available for use
             return self.async_create_entry(
                 title="ChatGPT",
                 data=user_input,
@@ -183,6 +198,10 @@ class OpenAISubentryFlowHandler(ConfigSubentryFlow):
         self.options = self._get_reconfigure_subentry().data.copy()
         return await self.async_step_init()
 
+    # LLM: Main options flow step that handles both simple and advanced configuration modes
+    # Purpose: Presents appropriate UI based on recommended mode and validates configuration changes
+    # Role in Scope: Central options management with validation for model compatibility and feature support
+    # Caveats: Re-renders form when switching modes, validates web search model support, handles location data
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -417,15 +436,26 @@ class OpenAISubentryFlowHandler(ConfigSubentryFlow):
             errors=errors,
         )
 
+    # USERNOTE: Determines user's approximate location for enhanced web search results
+    # - Uses OpenAI to convert Home Assistant coordinates into city/region names for search context
+    # - Enhances web search accuracy by providing location-aware search results
+    async def get_location_data(self) -> dict[str, str]:
     async def _get_location_data(self) -> dict[str, str]:
         """Get approximate location data of the user."""
         location_data: dict[str, str] = {}
+        
+        # USERNOTE: Get user home location.
+        # - "zone.home" is a built-in Zone entity representing user home location
         zone_home = self.hass.states.get(ENTITY_ID_HOME)
         if zone_home is not None:
+            # USERNOTE: Create OpenAI client to perform coordinate-to-location conversion Get user home location.
             client = openai.AsyncOpenAI(
                 api_key=self._get_entry().data[CONF_API_KEY],
                 http_client=get_async_client(self.hass),
             )
+            
+            # USERNOTE: Define schema for structured location output from OpenAI
+            # This ensures we get consistent city and region information
             location_schema = vol.Schema(
                 {
                     vol.Optional(
@@ -438,6 +468,9 @@ class OpenAISubentryFlowHandler(ConfigSubentryFlow):
                     ): str,
                 }
             )
+            
+            # USERNOTE: Query OpenAI to convert coordinates to human-readable location
+            # This provides context for web searches without exposing exact coordinates
             response = await client.responses.create(
                 model=RECOMMENDED_CHAT_MODEL,
                 input=[
@@ -460,8 +493,12 @@ class OpenAISubentryFlowHandler(ConfigSubentryFlow):
                 },
                 store=False,
             )
+            
+            # USERNOTE: Parse and validate the OpenAI response using our schema
             location_data = location_schema(json.loads(response.output_text) or {})
 
+        # USERNOTE: Add additional location context from Home Assistant configuration
+        # - Country & timezone
         if self.hass.config.country:
             location_data[CONF_WEB_SEARCH_COUNTRY] = self.hass.config.country
         location_data[CONF_WEB_SEARCH_TIMEZONE] = self.hass.config.time_zone

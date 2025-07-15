@@ -90,6 +90,8 @@ def websocket_list_entities_for_display(
             if entry.disabled_by is None and entry.display_json_repr is not None
         ]
     )
+    # USERNOTE: Join the prefix, inner, and suffix together as a single bytes object.
+    # USERNOTE: These candidates are all bytes: For memory efficiency and performance, as we will have to send bytes to client anyway.
     msg_json = b"".join((msg_json_prefix, inner, b"]}}"))
     connection.send_message(msg_json)
 

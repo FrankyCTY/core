@@ -11,15 +11,19 @@ THREADING_SHUTDOWN_TIMEOUT = 10
 _LOGGER = logging.getLogger(__name__)
 
 
+# USERNOTE: To solve issue with Python 3.8 on Windows. Python's threading._shutdown method can hang forever preventing the process from exiting.
 def deadlock_safe_shutdown() -> None:
     """Shutdown that will not deadlock."""
     # threading._shutdown can deadlock forever
     # see https://github.com/justengel/continuous_threading#shutdown-update
     # for additional detail
+
     remaining_threads = [
         thread
         for thread in threading.enumerate()
+        # USERNOTE: Exclude main thread to avoid deadklock as the main thread is the thread currently running the shutdown code.
         if thread is not threading.main_thread()
+        # USERNOTE: Daemon threads will not block the process from exiting.
         and not thread.daemon
         and thread.is_alive()
     ]
@@ -30,6 +34,8 @@ def deadlock_safe_shutdown() -> None:
     timeout_per_thread = THREADING_SHUTDOWN_TIMEOUT / len(remaining_threads)
     for thread in remaining_threads:
         try:
+            # USERNOTE: Request to join threads individually with a timeout.
+            # USERNOTE: But if the thread does not finish which causes exception, we suppress the exception, meaning the process can still be blocked from exiting.
             thread.join(timeout_per_thread)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Failed to join thread: %s", err)

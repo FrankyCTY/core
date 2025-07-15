@@ -239,6 +239,8 @@ _BLOCKING_CALLS: tuple[BlockingCall, ...] = (
 class BlockedCalls:
     """Class to track which calls are blocked."""
 
+    # USERNOTE: The predefined function that we consider as blocking calls that we want to protect the event loop from.
+    # USERNOTE: Will be populated when enable() is called.
     calls: set[BlockingCall]
 
 
@@ -248,6 +250,7 @@ _BLOCKED_CALLS = BlockedCalls(set())
 def enable() -> None:
     """Enable the detection of blocking calls in the event loop."""
     calls = _BLOCKED_CALLS.calls
+    # USERNOTE: Checks if blocking detection is already enabled (if yes, throws a RuntimeError).
     if calls:
         raise RuntimeError("Blocking call detection is already enabled")
 

@@ -273,6 +273,7 @@ async def async_check_can_reach_url(
     hass: HomeAssistant, url: str, more_info: str | None = None
 ) -> str | dict[str, str]:
     """Test if the url can be reached."""
+    # USERNOTE: Create a new clientsession for each check.
     session = aiohttp_client.async_get_clientsession(hass)
 
     try:

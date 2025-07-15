@@ -160,6 +160,7 @@ class _TranslationCache:
         """Return if the given components are loaded for the language."""
         return components.issubset(self.cache_data.loaded.get(language, set()))
 
+    # USERNOTE: Load different languages translations to cache.
     async def async_load(
         self,
         language: str,

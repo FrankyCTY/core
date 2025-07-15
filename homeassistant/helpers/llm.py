@@ -73,6 +73,7 @@ NO_ENTITIES_PROMPT = (
     "to their voice assistant in Home Assistant."
 )
 
+# USERNOTE: Prompt to handle static and live context query.
 DYNAMIC_CONTEXT_PROMPT = """You ARE equipped to answer questions about the current state of
 the home using the `GetLiveContext` tool. This is a primary function. Do not state you lack the
 functionality if the question requires live data.
@@ -149,6 +150,7 @@ async def async_get_api(
     return await api.async_get_api_instance(llm_context)
 
 
+# USERNOTE: Get all the LLM APIs, currently only support "assist API".
 @callback
 def async_get_apis(hass: HomeAssistant) -> list[API]:
     """Get all the LLM APIs."""

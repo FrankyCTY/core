@@ -119,12 +119,14 @@ def _async_loop_exception_handler(_: Any, context: dict[str, Any]) -> None:
 
 async def setup_and_run_hass(runtime_config: RuntimeConfig) -> int:
     """Set up Home Assistant and run."""
+    # USERNOTE: Set up hass core object using runtime config, which includes setting up integrations, registries, config entries, etc.
     hass = await bootstrap.async_setup_hass(runtime_config)
 
     if hass is None:
         return 1
 
     # threading._shutdown can deadlock forever
+    # USERNOTE: To solve issue with Python 3.8 on Windows. Python's threading._shutdown method can hang forever preventing the process from exiting.
     threading._shutdown = deadlock_safe_shutdown  # type: ignore[attr-defined]  # noqa: SLF001
 
     return await hass.async_run()

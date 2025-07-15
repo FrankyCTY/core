@@ -350,6 +350,7 @@ class HassJob[**_P, _R_co]:
         self._cancel_on_shutdown = cancel_on_shutdown
         self._cache: dict[str, Any] = {}
         if job_type:
+            # USERNOTE: Pre-set the cached_property when job_type() is invoked, the cached_property will return the pre-set value. We expect job type to be inferred in advance when the job is created to avoid checking it every time when we run the job.
             # Pre-set the cached_property so we
             # avoid the function call
             self._cache["job_type"] = job_type
@@ -377,6 +378,8 @@ class HassJobWithArgs:
     args: Iterable[Any]
 
 
+# USERNOTE: Determine job type HassJobType for callback. (e.g. coroutine function, callback, executor)
+# USERNOTE: This can affect how it is being executed, and help to make the code more efficient (e.g. event loop unblocked)
 def get_hassjob_callable_job_type(target: Callable[..., Any]) -> HassJobType:
     """Determine the job type from the callable."""
     # Check for partials to properly determine if coroutine function
@@ -436,7 +439,9 @@ class HomeAssistant:
         self._background_tasks: set[asyncio.Future[Any]] = set()
         self.bus = EventBus(self)
         self.services = ServiceRegistry(self)
+        # USERNOTE: Tracks state of entities
         self.states = StateMachine(self.bus, self.loop)
+        # USERNOTE: Includes loaded integrations (in components) and platforms (in all_components).
         self.config = Config(self, config_dir)
         self.config.async_initialize()
         self.state: CoreState = CoreState.not_running
@@ -452,6 +457,7 @@ class HomeAssistant:
         )
         self.loop_thread_id = self.loop._thread_id  # type: ignore[attr-defined] # noqa: SLF001
 
+    # USERNOTE: Ensure the operation is running in the event loop thread.
     def verify_event_loop_thread(self, what: str) -> None:
         """Report and raise if we are not running in the event loop thread."""
         if self.loop_thread_id != threading.get_ident():
@@ -726,6 +732,8 @@ class HomeAssistant:
         background: bool = False,
     ) -> asyncio.Future[_R] | None: ...
 
+    # USERNOTE: Execute the hass job based on the job type to make the code more efficient.
+    # USERNOTE: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
     @callback
     def _async_add_hass_job[_R](
         self,
@@ -750,23 +758,29 @@ class HomeAssistant:
         if hassjob.job_type is HassJobType.Coroutinefunction:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., Coroutine[Any, Any, _R]], hassjob)
+            # USERNOTE: Run as eager task, meaning it is executed immediately until the coroutine await suspension point.
             task = create_eager_task(
                 hassjob.target(*args), name=hassjob.name, loop=self.loop
             )
+            # USERNOTE: It could be done() after running if means it is actually fully synchronous with no suspension point. (e.g. await)
             if task.done():
                 return task
         elif hassjob.job_type is HassJobType.Callback:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
+            # USERNOTE: Schedule immediate to eventloop.
             self.loop.call_soon(hassjob.target, *args)
             return None
         else:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
+            # USERNOTE: Allows to offload blocking or CPU-bound functions to a separate thread or process
             task = self.loop.run_in_executor(None, hassjob.target, *args)
 
+        # USERNOTE: Add task to background task set if background is True, otherwise add to foreground task set.
         task_bucket = self._background_tasks if background else self._tasks
         task_bucket.add(task)
+        # USERNOTE: Remove task from the set when it is done.
         task.add_done_callback(task_bucket.remove)
 
         return task
@@ -874,13 +888,17 @@ class HomeAssistant:
         """Add an executor job from within the event loop."""
         task = self.loop.run_in_executor(None, target, *args)
 
+        # USERNOTE: Check if the coroutine that invokes this callback is tracked within _tasks as part of the hass tracking system.
+        # Example: Ancestor called called via `async_run_job` will be tracked e.g.
         tracked = asyncio.current_task() in self._tasks
+        # USERNOTE: If the caller coroutine is tracked, then add this to _tasks (tracked foreground tasks bucket)
         task_bucket = self._tasks if tracked else self._background_tasks
         task_bucket.add(task)
         task.add_done_callback(task_bucket.remove)
 
         return task
 
+    # USERNOTE: Use interruptible thread pool executor with max worker set to 1 to execute the import callable.
     @callback
     def async_add_import_executor_job[*_Ts, _T](
         self, target: Callable[[*_Ts], _T], *args: *_Ts
@@ -889,6 +907,8 @@ class HomeAssistant:
 
         The future returned from this method must be awaited in the event loop.
         """
+        # USERNOTE: Use interruptible thread pool executor with max worker set to 1 to execute the import callable.
+        # USERNOTE: This executor has timeout configured e.g.
         return self.loop.run_in_executor(self.import_executor, target, *args)
 
     @overload
@@ -909,12 +929,14 @@ class HomeAssistant:
         background: bool = False,
     ) -> asyncio.Future[_R] | None: ...
 
+    # USERNOTE: Execute the hass job based on the job type to make the code more efficient.
+    # USERNOTE: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
     @callback
     def async_run_hass_job[_R](
         self,
         hassjob: HassJob[..., Coroutine[Any, Any, _R] | _R],
         *args: Any,
-        background: bool = False,
+        background: bool = False,  # USERNOTE:
     ) -> asyncio.Future[_R] | None:
         """Run a HassJob from within the event loop.
 
@@ -929,12 +951,15 @@ class HomeAssistant:
         # if TYPE_CHECKING to avoid the overhead of constructing
         # the type used for the cast. For history see:
         # https://github.com/home-assistant/core/pull/71960
+        # USERNOTE: If hass job is callback, invoke it immediately as it should be light.
         if hassjob.job_type is HassJobType.Callback:
             if TYPE_CHECKING:
                 hassjob = cast(HassJob[..., _R], hassjob)
             hassjob.target(*args)
             return None
 
+        # USERNOTE: Execute the hass job based on the job type to make the code more efficient.
+        # USERNOTE: Track the task in hass core internal task list (background or foreground) list, and remove when it is done.
         return self._async_add_hass_job(hassjob, *args, background=background)
 
     @overload
@@ -1024,6 +1049,8 @@ class HomeAssistant:
                 for task in tasks:
                     _LOGGER.debug("Waiting for task: %s", task)
 
+    # USERNOTE: Block event loop until all pending tasks are completed.
+    # Log pending tasks every 60 seconds.
     async def _await_and_log_pending(
         self, pending: Collection[asyncio.Future[Any]]
     ) -> None:
@@ -1106,6 +1133,7 @@ class HomeAssistant:
 
         # Stage 1 - Run shutdown jobs
         try:
+            # FIXME: Lean about this timeout implementation
             async with self.timeout.async_timeout(STOPPING_STAGE_SHUTDOWN_TIMEOUT):
                 tasks: list[asyncio.Future[Any]] = []
                 for job in self._shutdown_jobs:
@@ -1114,6 +1142,8 @@ class HomeAssistant:
                         continue
                     tasks.append(task_or_none)
                 if tasks:
+                    # USERNOTE: Run all shutdown jobs concurrently.
+                    # FIXME: Where are the jobs defined and added?
                     await asyncio.gather(*tasks, return_exceptions=True)
         except TimeoutError:
             _LOGGER.warning(
@@ -1127,6 +1157,7 @@ class HomeAssistant:
         # Keep holding the reference to the tasks but do not allow them
         # to block shutdown. Only tasks created after this point will
         # be waited for.
+        # USERNOTE: Because later on we will call async_block_till_done() but we only want to wait for tasks created after this point.
         running_tasks = self._tasks
         # Avoid clearing here since we want the remove callbacks to fire
         # and remove the tasks from the original set which is now running_tasks
@@ -1137,13 +1168,18 @@ class HomeAssistant:
             self._tasks.add(task)
             task.add_done_callback(self._tasks.remove)
             task.cancel("Home Assistant is stopping")
+        # USERNOTE: Cancel all handlers in _schedule of the event loop that has HassJob as the first argument.
         self._cancel_cancellable_timers()
 
         self.exit_code = exit_code
 
         self.set_state(CoreState.stopping)
+        # USERNOTE: Fire homeassistant_stop event via event bus!
+        # Invoke all callbacks/coroutine function job types e.g. related to event type homeassistant_stop.
         self.bus.async_fire_internal(EVENT_HOMEASSISTANT_STOP)
         try:
+            # USERNOTE: Block event loop until all pending tasks are completed.
+            # Log pending tasks every 60 seconds.
             async with self.timeout.async_timeout(STOP_STAGE_SHUTDOWN_TIMEOUT):
                 await self.async_block_till_done()
         except TimeoutError:
@@ -1154,8 +1190,11 @@ class HomeAssistant:
 
         # Stage 3 - Final write
         self.set_state(CoreState.final_write)
+        # USERNOTE: Fire homeassistant_final_write event via event bus!
         self.bus.async_fire_internal(EVENT_HOMEASSISTANT_FINAL_WRITE)
         try:
+            # USERNOTE: Block event loop until all pending tasks are completed.
+            # Log pending tasks every 60 seconds.
             async with self.timeout.async_timeout(FINAL_WRITE_STAGE_SHUTDOWN_TIMEOUT):
                 await self.async_block_till_done()
         except TimeoutError:
@@ -1167,6 +1206,7 @@ class HomeAssistant:
 
         # Stage 4 - Close
         self.set_state(CoreState.not_running)
+        # USERNOTE: Fire homeassistant_close event via event bus!
         self.bus.async_fire_internal(EVENT_HOMEASSISTANT_CLOSE)
 
         # Make a copy of running_tasks since a task can finish
@@ -1203,9 +1243,12 @@ class HomeAssistant:
         # it returns will never run after the final `self.async_block_till_done`
         # which will cause the futures to block forever when waiting for
         # the `result()` which will cause a deadlock when shutting down the executor.
+        # USERNOTE: Set attribute on the event loop to prevent scheduling additional callbacks.
         shutdown_run_callback_threadsafe(self.loop)
 
         try:
+            # USERNOTE: Block event loop until all pending tasks are completed.
+            # Log pending tasks every 60 seconds.
             async with self.timeout.async_timeout(CLOSE_STAGE_SHUTDOWN_TIMEOUT):
                 await self.async_block_till_done()
         except TimeoutError:
@@ -1219,6 +1262,7 @@ class HomeAssistant:
         self.import_executor.shutdown()
 
         if self._stopped is not None:
+            # USERNOTE: Immediately unblocks any coroutine awaiting await self._stopped.wait().
             self._stopped.set()
 
     def _cancel_cancellable_timers(self) -> None:
@@ -1238,6 +1282,9 @@ class HomeAssistant:
             _LOGGER.warning("Shutdown stage '%s': still running: %s", stage, task)
 
 
+# USERNOTE: A correlation mechanism that links together events and state changes triggered by a common source.
+# USERNOTE: This is useful for the LOGBOOK e.g.
+# USERNOTE: https://data.home-assistant.io/docs/context
 class Context:
     """The context that triggered something."""
 
@@ -1417,6 +1464,8 @@ _FilterableJobType = tuple[
 ]
 
 
+# USERNOTE: More a one time handler that would be registered to the event bus and triggered when the event is fired.
+# USERNOTE: Support handler remove callback.
 @dataclass(slots=True)
 class _OneTimeListener(Generic[_DataT]):
     hass: HomeAssistant
@@ -1697,9 +1746,12 @@ class EventBus:
                 breaks_in_ha_version="2025.5",
             )
 
+        # USERNOTE: More a one time handler that would be registered to the event bus and triggered when the event is fired.
+        # USERNOTE: Support handler remove callback.
         one_time_listener: _OneTimeListener[_DataT] = _OneTimeListener(
             self._hass, HassJob(listener)
         )
+        # USERNOTE: Register the one time listener to the event bus, will be added to the internal listeners dict.
         remove = self._async_listen_filterable_job(
             event_type,
             (
@@ -1711,6 +1763,7 @@ class EventBus:
                 None,
             ),
         )
+        # USERNOTE: Store the remove callback in the one time listener.
         one_time_listener.remove = remove
         return remove
 
@@ -2055,6 +2108,7 @@ class States(UserDict[str, State]):
         return self._domain_index[key].values()
 
 
+# USERNOTE: Tracks state of entities
 class StateMachine:
     """Helper class that tracks the state of different entities."""
 
@@ -2396,16 +2450,20 @@ class StateMachine:
 class SupportsResponse(enum.StrEnum):
     """Service call response configuration."""
 
+    # USERNOTE: Just performs an action (like turning on a light)
     NONE = "none"
     """The service does not support responses (the default)."""
 
+    # USERNOTE: Optionally returns data (like fetching the current temperature)
     OPTIONAL = "optional"
     """The service optionally returns response data when asked by the caller."""
 
+    # USERNOTE: Must return data (like asking ChatGPT for a reply)
     ONLY = "only"
     """The service is read-only and the caller must always ask for response data."""
 
 
+# USERNOTE: A service represents a callable action or command that users or automations can invoke on the Home Assistant system.
 class Service:
     """Representation of a callable service."""
 
@@ -2420,6 +2478,7 @@ class Service:
             | EntityServiceResponse
             | None,
         ],
+        # USERNOTE: For validating input parameters
         schema: VolSchemaType | None,
         domain: str,
         service: str,
@@ -2433,6 +2492,7 @@ class Service:
         self.supports_response = supports_response
 
 
+# USERNOTE: Service call is a runtime object that represents a specific request to invoke a service.
 class ServiceCall:
     """Representation of a call to a service."""
 
@@ -2444,6 +2504,8 @@ class ServiceCall:
         domain: str,
         service: str,
         data: dict[str, Any] | None = None,
+        # USERNOTE: Context object for correlation mechanism.
+        # https://data.home-assistant.io/docs/context
         context: Context | None = None,
         return_response: bool = False,
     ) -> None:
@@ -2451,6 +2513,7 @@ class ServiceCall:
         self.hass = hass
         self.domain = domain
         self.service = service
+        # USERNOTE: Payload of the service call request.
         self.data = ReadOnlyDict(data or {})
         self.context = context or Context()
         self.return_response = return_response
@@ -2473,6 +2536,7 @@ class ServiceRegistry:
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize a service registry."""
+        # USERNOTE: dict = Domina: { service_action_name: service_action_obj (Service class instance) }
         self._services: dict[str, dict[str, Service]] = {}
         self._hass = hass
 
@@ -2558,11 +2622,12 @@ class ServiceRegistry:
             supports_response,
         ).result()
 
+    # USERNOTE: Register a service action for the domain.
     @callback
     def async_register(
         self,
         domain: str,
-        service: str,
+        service: str,  # USERNOTE: Service action name
         service_func: Callable[
             [ServiceCall],
             Coroutine[Any, Any, ServiceResponse | EntityServiceResponse]
@@ -2580,6 +2645,7 @@ class ServiceRegistry:
 
         This method must be run in the event loop.
         """
+        # USERNOTE: Ensure the operation is running in the event loop thread.
         self._hass.verify_event_loop_thread("hass.services.async_register")
         self._async_register(
             domain, service, service_func, schema, supports_response, job_type
@@ -2589,7 +2655,7 @@ class ServiceRegistry:
     def _async_register(
         self,
         domain: str,
-        service: str,
+        service: str,  # USERNOTE: Service action name
         service_func: Callable[
             [ServiceCall],
             Coroutine[Any, Any, ServiceResponse | EntityServiceResponse]
@@ -2618,11 +2684,13 @@ class ServiceRegistry:
             job_type=job_type,
         )
 
+        # USERNOTE: Set to the in memory dict.
         if domain in self._services:
             self._services[domain][service] = service_obj
         else:
             self._services[domain] = {service: service_obj}
 
+        # USERNOTE: Dispatch the event to the event bus.
         self._hass.bus.async_fire_internal(
             EVENT_SERVICE_REGISTERED, {ATTR_DOMAIN: domain, ATTR_SERVICE: service}
         )

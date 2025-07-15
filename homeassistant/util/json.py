@@ -60,16 +60,22 @@ def json_loads_object(obj: bytes | bytearray | memoryview | str, /) -> JsonObjec
     raise ValueError(f"Expected JSON to be parsed as a dict got {type(value)}")
 
 
+# USERNOTE: Recommends to be ran in a thread pool executor.
+# USERNOTE: Sync I/O work against the file system to read files waits for sys call.
+# USERNOTE: Synchronous CPU-bound task to parse JSON data using orjson that bypass GIL.
 def load_json(
     filename: str | PathLike[str],
     default: JsonValueType = _SENTINEL,  # type: ignore[assignment]
 ) -> JsonValueType:
-    """Load JSON data from a file.
+    """TODO: Load JSON data from a file.
 
     Defaults to returning empty dict if file is not found.
     """
     try:
+        # USERNOTE: Open the file in binary read mode. We get bytes back instead of str.
+        # USERNOTE: fdesc: Python object that wraps the file descriptor (FD).
         with open(filename, mode="rb") as fdesc:
+            # USERNOTE: Uses rust based orjson library to parse the bytes into Python objects.
             return orjson.loads(fdesc.read())  # type: ignore[no-any-return]
     except FileNotFoundError:
         # This is not a fatal error

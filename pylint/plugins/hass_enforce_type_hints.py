@@ -37,6 +37,7 @@ class _Special(Enum):
     UNDEFINED = 1
 
 
+# USERNOTE: Represents a single method (e.g., brightness, color_mode, etc.) that an entity class is expected to implement, including its type hints.
 @dataclass
 class TypeHintMatch:
     """Class for pattern matching."""
@@ -69,6 +70,7 @@ class TypeHintMatch:
         )
 
 
+# USERNOTE: Defines a group of expected method signatures for a base class.
 @dataclass(kw_only=True)
 class ClassTypeHintMatch:
     """Class for pattern matching."""

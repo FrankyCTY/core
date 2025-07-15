@@ -16,6 +16,9 @@ from .entity import OpenAIBaseLLMEntity
 # Max number of back and forth with the LLM to generate a response
 
 
+# USERNOTE: Entry will be the corresponding integration's config entry forwarded to the platform.
+# Goal: Set up the platform's entities
+# USERNOTE: This will be invoked in platform forwarding flow, see at the end of EntityComponent.async_setup_entry(), which set up the platform via platform entity for the platform.
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: OpenAIConfigEntry,

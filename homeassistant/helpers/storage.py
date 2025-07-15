@@ -96,12 +96,15 @@ def get_internal_store_manager(hass: HomeAssistant) -> _StoreManager:
     used in the Home Assistant core internals. It is not
     guaranteed to be stable.
     """
+    # USERNOTE: Load internal cache storage manager from HASS cache data otherwise create a new one.
     if STORAGE_MANAGER not in hass.data:
         manager = _StoreManager(hass)
         hass.data[STORAGE_MANAGER] = manager
     return hass.data[STORAGE_MANAGER]
 
 
+# USERNOTE: Internal CACHE storage manager.
+# USERNOTE: Will be loaded into HASS cache data.
 class _StoreManager:
     """Class to help storing data.
 
@@ -112,8 +115,11 @@ class _StoreManager:
         """Initialize storage manager class."""
         self._hass = hass
         self._invalidated: set[str] = set()
+        # USERNOTE: Set of filenames in the `.storage` directory based on _storage_path.
         self._files: set[str] | None = None
+        # USERNOTE: The actual in memory cache of preloaded files in JSON format.
         self._data_preload: dict[str, json_util.JsonValueType] = {}
+        # USERNOTE: <config_directory>/.storage
         self._storage_path: Path = Path(hass.config.config_dir).joinpath(STORAGE_DIR)
         self._cancel_cleanup: asyncio.TimerHandle | None = None
 
@@ -155,17 +161,19 @@ class _StoreManager:
         # The "/" in key check is to prevent the cache from being used
         # for subdirs in case we have a key like "hacs/XXX"
         #
+        # USERNOTE: We don't support cachging subdirs so return cache miss if it is requested.
+        # USERNOTE: Check _files to ensure the async_initialize has been called to avoid false negative.
         if "/" in key or key in self._invalidated or self._files is None:
             _LOGGER.debug("%s: Cache miss", key)
             return None
 
-        # If async_initialize has been called and the key is not in self._files
+        # USERNOTE: If async_initialize (self_files is set in init) has been called and the key is not in self._files
         # then the file does not exist
         if key not in self._files:
             _LOGGER.debug("%s: Cache hit, does not exist", key)
             return (False, None)
 
-        # If the key is in the preload cache, return it
+        # USERNOTE: If the key is in the preload cache, return it,
         if data := self._data_preload.pop(key, None):
             _LOGGER.debug("%s: Cache hit data", key)
             return (True, data)
@@ -202,20 +210,26 @@ class _StoreManager:
         """
         self._data_preload.clear()
 
+    # USERNOTE: Executed in bootstrap.py
+    # USERNOTE: Preload based on keys (filenames) into in memory dict _data_preload.
     async def async_preload(self, keys: Iterable[str]) -> None:
         """Cache the keys."""
-        # If async_initialize has not been called yet, we can't preload
+        # USERNOTE: If async_initialize has not been called yet, we can't preload data into in memory dict
         if self._files is not None and (existing := self._files.intersection(keys)):
+            # USERNOTE: Uses thread pool executor as the callback does sync I/O work against the file system and sync CPU-bound task to parse JSON data.
             await self._hass.async_add_executor_job(self._preload, existing)
 
     def _preload(self, keys: Iterable[str]) -> None:
         """Cache the keys."""
+        # USERNOTE: We already checked async_initialize has been called, so storage_path should be ready.
         storage_path = self._storage_path
         data_preload = self._data_preload
         for key in keys:
             storage_file: Path = storage_path.joinpath(key)
             try:
+                # USERNOTE: We DO NOT want to cache subdirs, only files.
                 if storage_file.is_file():
+                    # USERNOTE: Load file bytes into Python objects and store in _data_preload.
                     data_preload[key] = json_util.load_json(storage_file)
             except Exception as ex:  # noqa: BLE001
                 _LOGGER.debug("Error loading %s: %s", key, ex)
@@ -226,6 +240,10 @@ class _StoreManager:
             self._files = set(os.listdir(self._storage_path))
 
 
+# USERNOTE: Single file storage class, with version and migration support.
+# USERNOTE: 2 layer in memory cache:
+# USERNOTE: First layer: self._data: dict[str, Any]
+# USERNOTE: Second layer: self._manager._data_preload
 @bind_hass
 class Store[_T: Mapping[str, Any] | Sequence[Any]]:
     """Class to help storing data."""
@@ -257,6 +275,7 @@ class Store[_T: Mapping[str, Any] | Sequence[Any]]:
         self._atomic_writes = atomic_writes
         self._read_only = read_only
         self._next_write_time = 0.0
+        # USERNOTE: Internal cache storage manager
         self._manager = get_internal_store_manager(hass)
 
     @cached_property
@@ -281,9 +300,12 @@ class Store[_T: Mapping[str, Any] | Sequence[Any]]:
         Will ensure that when a call comes in while another one is in progress,
         the second call will wait and return the result of the first call.
         """
+        # USERNOTE: Avoid re-triggering load request if there is already a pending load request.
+        # USERNOTE: Let's subsequent request to wait for the first request to complete.
         if self._load_future:
             return await self._load_future
 
+        # USERNOTE: Set the loading in progress future to allow subsequent requests to await for.
         self._load_future = self.hass.loop.create_future()
         try:
             result = await self._async_load()
@@ -303,28 +325,35 @@ class Store[_T: Mapping[str, Any] | Sequence[Any]]:
 
     async def _async_load(self) -> _T | None:
         """Load the data and ensure the task is removed."""
+        # USERNOTE: Set up a semaphore to limit the number of concurrent load requests to 6.
         if STORAGE_SEMAPHORE not in self.hass.data:
             self.hass.data[STORAGE_SEMAPHORE] = asyncio.Semaphore(MAX_LOAD_CONCURRENTLY)
+        # USERNOTE: Obtain the semaphore.
         async with self.hass.data[STORAGE_SEMAPHORE]:
             return await self._async_load_data()
 
     async def _async_load_data(self):
         """Load the data."""
         # Check if we have a pending write
+        # USERNOTE: CASE 1: If there is loaded data cached in self._data.
         if self._data is not None:
             data = self._data
 
             # If we didn't generate data yet, do it now.
+            # USERNOTE: If the staged data includes a "data_func" callback, it calls it now (lazy evaluation — only compute data when needed).
             if "data_func" in data:
                 data["data"] = data.pop("data_func")()
 
             # We make a copy because code might assume it's safe to mutate loaded data
             # and we don't want that to mess with what we're trying to store.
+            # USERNOTE: Make deep copy for mutation to avoid side effects affect others consumers that are using the same data (reference).
             data = deepcopy(data)
+        # USERNOTE: CASE 2: Try get json files from internal storage manager cache.
         elif cache := self._manager.async_fetch(self.key):
             exists, data = cache
             if not exists:
                 return None
+        # USERNOTE: CASE 3: Load from '.storage' directory, which will invoke lots of parsing, transformation, etc.
         else:
             try:
                 data = await self.hass.async_add_executor_job(

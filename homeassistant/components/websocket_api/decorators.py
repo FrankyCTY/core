@@ -158,6 +158,7 @@ def websocket_command(
                 ),
                 *schema.validators[1:],
             )
+            # USERNOTE: _ws_schema and _ws_command could be used by async_register_command() to register the command into hass.data[websocket_api domain]. (see __init__.py in websocket_api)
             func._ws_schema = extended_schema  # type: ignore[attr-defined]  # noqa: SLF001
         func._ws_command = command  # type: ignore[attr-defined]  # noqa: SLF001
         return func

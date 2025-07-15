@@ -1205,6 +1205,7 @@ def empty_config_schema(domain: str) -> Callable[[dict], dict]:
     return validator
 
 
+# USERNOTE: Set up and return a callable config schema which logs if attempted to setup from YAML.
 def _no_yaml_config_schema(
     domain: str,
     issue_base: str,
@@ -1245,6 +1246,10 @@ def _no_yaml_config_schema(
     return validator
 
 
+# USERNOTE: Set up and return a callable config schema which logs if attempted to setup from YAML.
+# USERNOTE: Integration developers should use this when:
+# - Integration's __init__.py defines setup or async_setup BUT
+# - Setup from YAML is NOT supported.
 def config_entry_only_config_schema(domain: str) -> Callable[[dict], dict]:
     """Return a config schema which logs if attempted to setup from YAML.
 
